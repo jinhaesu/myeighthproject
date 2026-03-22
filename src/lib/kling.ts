@@ -64,7 +64,7 @@ export async function generateKlingVideo(params: KlingVideoParams): Promise<Klin
     prompt,
     imageUrl,
     duration = '5',
-    mode = 'std',
+    mode = 'pro',
     outputPath,
   } = params;
 
