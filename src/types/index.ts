@@ -129,6 +129,8 @@ export interface GenerateVideoRequest {
   background_color?: string;
   background_image?: string;
   font_size?: number;
+  generate_images?: boolean;        // Generate DALL-E images for sections (default true)
+  sections?: Array<{ body: string; duration_seconds: number }>;
 }
 
 export interface CreatePlatformAccountRequest {

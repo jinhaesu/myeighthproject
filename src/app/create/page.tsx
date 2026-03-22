@@ -416,44 +416,21 @@ export default function CreatePage() {
                     )}
                   </Button>
 
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={bgmGenerating || bgmGenerated || !contentId}
-                    onClick={async () => {
-                      if (!contentId) return;
-                      setBgmGenerating(true);
-                      try {
-                        await apiPost('/api/generate/bgm', { content_id: contentId });
-                        setBgmGenerated(true);
-                      } catch (err) {
-                        setError(err instanceof Error ? err.message : 'BGM 생성 실패');
-                      } finally {
-                        setBgmGenerating(false);
-                      }
-                    }}
-                  >
-                    {bgmGenerating ? (
-                      <>
-                        <div className="w-3 h-3 border-2 border-[#1a5c2e] border-t-transparent rounded-full animate-spin" />
-                        BGM 생성 중...
-                      </>
-                    ) : bgmGenerated ? (
-                      <>
-                        <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        BGM 생성됨
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-                        </svg>
-                        Mubert BGM 생성
-                      </>
-                    )}
-                  </Button>
+                  <div className="relative group">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={true}
+                    >
+                      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                      </svg>
+                      Mubert BGM (설정 필요)
+                    </Button>
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 bg-gray-800 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                      Mubert API 설정이 필요합니다. BGM 없이도 영상 생성 가능합니다.
+                    </div>
+                  </div>
                 </div>
               </div>
 

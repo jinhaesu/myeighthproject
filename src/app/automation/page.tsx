@@ -43,7 +43,7 @@ const STEP_LABELS: Record<string, string> = {
   script: '스크립트 생성 (AI)',
   image: '이미지 생성 (DALL-E 3)',
   tts: 'TTS 음성 생성',
-  bgm: 'BGM 생성 (Mubert)',
+  bgm: 'BGM 생성 (설정 필요)',
   video: '영상 합성',
   caption: '캡션/해시태그 생성',
   publish_schedule: '배포 예약',
@@ -429,7 +429,7 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
                     'text-xs mt-0.5',
                     premiumMode ? 'text-amber-600' : 'text-gray-400'
                   )}>
-                    ElevenLabs TTS + DALL-E 3 이미지 + Mubert BGM
+                    ElevenLabs TTS + DALL-E 3 이미지 + 슬라이드쇼
                   </p>
                 </div>
               </div>
@@ -463,9 +463,9 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
                   <span className="font-medium text-amber-700">DALL-E 3</span>
                   <p className="text-amber-500">AI 이미지</p>
                 </div>
-                <div className="bg-white/80 rounded-lg px-2 py-1.5 text-center">
-                  <span className="font-medium text-amber-700">Mubert</span>
-                  <p className="text-amber-500">AI BGM</p>
+                <div className="bg-white/80 rounded-lg px-2 py-1.5 text-center opacity-50">
+                  <span className="font-medium text-gray-500">Mubert</span>
+                  <p className="text-gray-400">설정 필요</p>
                 </div>
               </div>
             )}

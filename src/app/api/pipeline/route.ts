@@ -14,6 +14,7 @@ import type {
   ContentType,
   Language,
   Platform,
+  ScriptSection,
   ApiResponse,
 } from '@/types';
 
@@ -25,6 +26,7 @@ interface ContentRow {
   content_type: ContentType;
   language: Language;
   script: string | null;
+  sections: string | null;
   audio_path: string | null;
   subtitle_path: string | null;
   video_path: string | null;
@@ -34,6 +36,12 @@ interface ContentRow {
 interface PlatformAccountRow {
   id: number;
   platform: Platform;
+}
+
+// ─── Helper: check if Mubert is configured ──────────────────────────────────
+
+function isMubertConfigured(): boolean {
+  return !!(process.env.MUBERT_EMAIL && process.env.MUBERT_API_TOKEN);
 }
 
 // ─── POST /api/pipeline ─────────────────────────────────────────────────────
@@ -68,7 +76,11 @@ export async function POST(request: Request) {
     const premiumMode = body.premium_mode === true;
     const usePremiumTTS = premiumMode || body.tts_provider === 'elevenlabs';
     const generateImg = premiumMode || body.generate_image === true;
-    const generateBgm = premiumMode || body.generate_bgm === true;
+    // BGM only if explicitly requested AND Mubert is configured
+    const generateBgm = (premiumMode || body.generate_bgm === true) && isMubertConfigured();
+
+    // Track sections for later use in video generation
+    let scriptSections: ScriptSection[] = [];
 
     // ─── Step 1: Create Content ──────────────────────────────────────────
     const step1Start = Date.now();
@@ -116,6 +128,14 @@ export async function POST(request: Request) {
 
       const step2Duration = Date.now() - step2Start;
 
+      // Store sections for video generation
+      scriptSections = scriptResult.sections;
+
+      // Duration warning
+      if (scriptResult.totalDuration > 60) {
+        console.warn(`[Pipeline] Script duration (${scriptResult.totalDuration}s) exceeds 60s short-form limit for content ${contentId}`);
+      }
+
       run(
         `UPDATE contents SET script = ?, sections = ?, status = 'script_ready', tags = COALESCE(tags, ?) WHERE id = ?`,
         [scriptResult.fullScript, JSON.stringify(scriptResult.sections), JSON.stringify(scriptResult.tags), contentId]
@@ -124,7 +144,7 @@ export async function POST(request: Request) {
       run(
         `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms)
          VALUES (?, 'script', 'completed', ?, ?)`,
-        [contentId, JSON.stringify({ title: scriptResult.title, sectionCount: scriptResult.sections.length }), step2Duration]
+        [contentId, JSON.stringify({ title: scriptResult.title, sectionCount: scriptResult.sections.length, totalDuration: scriptResult.totalDuration }), step2Duration]
       );
 
       steps.push({
@@ -147,7 +167,8 @@ export async function POST(request: Request) {
       } satisfies ApiResponse, { status: 500 });
     }
 
-    // ─── Step 3: Generate Image (DALL-E 3) - NEW ─────────────────────────
+    // ─── Step 3: Generate Thumbnail Image (DALL-E 3) ─────────────────────
+    // This is for the thumbnail only; section images are generated inside video step
     if (generateImg) {
       const step3Start = Date.now();
       try {
@@ -198,7 +219,7 @@ export async function POST(request: Request) {
       steps.push({ step: 'image', status: 'skipped' });
     }
 
-    // ─── Step 4: Generate TTS (ElevenLabs or edge-tts) - UPGRADED ────────
+    // ─── Step 4: Generate TTS (ElevenLabs or edge-tts) ───────────────────
     const step4Start = Date.now();
     try {
       const content = queryOne<ContentRow>('SELECT * FROM contents WHERE id = ?', [contentId]);
@@ -277,7 +298,7 @@ export async function POST(request: Request) {
       } satisfies ApiResponse, { status: 500 });
     }
 
-    // ─── Step 5: Generate BGM (Mubert) - NEW ─────────────────────────────
+    // ─── Step 5: Generate BGM (Mubert) - Only if configured ──────────────
     let bgmPath: string | null = null;
     if (generateBgm) {
       const step5Start = Date.now();
@@ -321,23 +342,36 @@ export async function POST(request: Request) {
         steps.push({ step: 'bgm', status: 'failed', duration_ms: Date.now() - step5Start, error: msg });
       }
     } else {
-      steps.push({ step: 'bgm', status: 'skipped' });
+      const skipReason = !isMubertConfigured() ? 'Mubert not configured' : 'not requested';
+      steps.push({ step: 'bgm', status: 'skipped', data: { reason: skipReason } });
     }
 
-    // ─── Step 6: Generate Video (Image BG + TTS + BGM + Subtitles) - UPGRADED
+    // ─── Step 6: Generate Video (Slideshow with DALL-E images) ───────────
     const step6Start = Date.now();
     try {
       const content = queryOne<ContentRow>('SELECT * FROM contents WHERE id = ?', [contentId]);
-      if (!content?.audio_path || !content?.subtitle_path) throw new Error('No audio/subtitle found');
+      if (!content?.audio_path) throw new Error('No audio found');
 
       run(
         `INSERT INTO generation_logs (content_id, step, status) VALUES (?, 'video', 'started')`,
         [contentId]
       );
 
-      // Use generated image as background if available
+      // Prepare sections for slideshow
+      let videoSections: Array<{ body: string; duration_seconds: number }> | undefined;
+
+      if (scriptSections.length > 0) {
+        videoSections = scriptSections.map((s) => ({
+          body: s.body,
+          duration_seconds: s.duration_seconds,
+        }));
+      }
+
+      // Generate video with integrated DALL-E slideshow
       const videoResult = await generateVideo(contentId, content.audio_path, content.subtitle_path, {
         backgroundImage: content.thumbnail_path || undefined,
+        sections: videoSections,
+        generateImages: true, // Always generate images for slideshow in pipeline
       });
       const step6Duration = Date.now() - step6Start;
 
@@ -349,14 +383,26 @@ export async function POST(request: Request) {
       run(
         `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms)
          VALUES (?, 'video', 'completed', ?, ?)`,
-        [contentId, JSON.stringify({ videoPath: videoResult.videoPath, videoSizeBytes: videoResult.videoSizeBytes }), step6Duration]
+        [contentId, JSON.stringify({
+          videoPath: videoResult.videoPath,
+          videoSizeBytes: videoResult.videoSizeBytes,
+          durationSeconds: videoResult.durationSeconds,
+          slideshowMode: !!videoSections,
+          sectionCount: videoSections?.length ?? 0,
+        }), step6Duration]
       );
 
       steps.push({
         step: 'video',
         status: 'success',
         duration_ms: step6Duration,
-        data: { videoPath: videoResult.videoPath },
+        data: {
+          videoPath: videoResult.videoPath,
+          slideshowMode: !!videoSections,
+          ...(videoResult.durationSeconds > 60 && {
+            durationWarning: `Video duration (${Math.round(videoResult.durationSeconds)}s) exceeds 60s short-form limit`,
+          }),
+        },
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
