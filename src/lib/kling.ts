@@ -165,8 +165,28 @@ export async function generateKlingVideo(params: KlingVideoParams): Promise<Klin
     const status = statusResult.data?.task_status;
 
     if (status === 'succeed') {
-      outputUrl = statusResult.data?.works?.[0]?.resource?.resource;
-      console.log(`[Kling] Task succeeded after ${attempt + 1} polls`);
+      // Log full response to debug URL extraction
+      console.log(`[Kling] Task succeeded after ${attempt + 1} polls. Response data:`, JSON.stringify(statusResult.data, null, 2));
+
+      // Try multiple possible response structures
+      const works = statusResult.data?.works;
+      if (works && works.length > 0) {
+        outputUrl = works[0]?.resource?.resource  // documented format
+          || (works[0]?.resource as unknown as { url?: string })?.url  // alternative
+          || (works[0] as unknown as { url?: string })?.url;  // flat format
+      }
+
+      // Also check top-level video_url
+      if (!outputUrl) {
+        outputUrl = (statusResult.data as unknown as { video_url?: string })?.video_url
+          || (statusResult.data as unknown as { output_url?: string })?.output_url;
+      }
+
+      if (outputUrl) {
+        console.log(`[Kling] Video URL found: ${outputUrl.slice(0, 100)}...`);
+      } else {
+        console.warn(`[Kling] Task succeeded but no video URL found in response`);
+      }
       break;
     }
 
