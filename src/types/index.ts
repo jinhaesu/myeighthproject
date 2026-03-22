@@ -221,6 +221,35 @@ export interface PipelineResult {
   total_duration_ms: number;
 }
 
+// ─── PPT Types ──────────────────────────────────────────────────────────────
+
+export type PptPreset = 'business_report' | 'proposal' | 'training' | 'business_plan' | 'custom';
+
+export interface PptSlide {
+  layout: 'title_slide' | 'section_header' | 'content' | 'two_column' | 'key_number' | 'table' | 'closing';
+  title: string;
+  subtitle?: string;
+  bullets?: string[];
+  left_title?: string;
+  left_bullets?: string[];
+  right_title?: string;
+  right_bullets?: string[];
+  numbers?: Array<{ value: string; label: string }>;
+  headers?: string[];
+  rows?: string[][];
+}
+
+export interface PptStructure {
+  title: string;
+  slides: PptSlide[];
+}
+
+export interface GeneratePptRequest {
+  text: string;
+  preset: PptPreset;
+  custom_instruction?: string;
+}
+
 // ─── API Response Types ─────────────────────────────────────────────────────
 
 export interface ApiResponse<T = unknown> {
