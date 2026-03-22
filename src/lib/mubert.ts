@@ -20,23 +20,72 @@ const MUBERT_API_BASE = 'https://api-b2b.mubert.com/v2';
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 60; // 3 minutes max
 
+// Cache PAT token
+let _cachedPat: string | null = null;
+
+async function getPat(): Promise<string> {
+  if (_cachedPat) return _cachedPat;
+
+  const email = process.env.MUBERT_EMAIL;
+  const token = process.env.MUBERT_API_TOKEN;
+
+  if (!email || !token) {
+    throw new Error(
+      'MUBERT_EMAIL과 MUBERT_API_TOKEN 환경변수를 설정해주세요. ' +
+      'MUBERT_EMAIL은 Mubert 가입 시 사용한 이메일입니다. ' +
+      '(MUBERT_API_ID는 UUID이므로 email 파라미터에 사용할 수 없습니다)'
+    );
+  }
+
+  const response = await fetch(`${MUBERT_API_BASE}/GetServiceAccess`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      method: 'GetServiceAccess',
+      params: {
+        email,
+        license: token,
+        token,
+        mode: 'loop',
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Mubert GetServiceAccess failed: ${response.status}`);
+  }
+
+  const result = await response.json() as {
+    data?: { pat?: string };
+    error?: { text?: string };
+  };
+
+  if (result.error?.text) {
+    throw new Error(`Mubert auth error: ${result.error.text}`);
+  }
+
+  const pat = result.data?.pat;
+  if (!pat) {
+    throw new Error('No PAT token returned from Mubert');
+  }
+
+  _cachedPat = pat;
+  return pat;
+}
+
 // ─── BGM Generation ─────────────────────────────────────────────────────────
 
 export async function generateBGM(params: BGMParams): Promise<BGMResult> {
   const { prompt, duration, outputPath } = params;
-
-  const apiId = process.env.MUBERT_API_ID;
-  const apiToken = process.env.MUBERT_API_TOKEN;
-
-  if (!apiId || !apiToken) {
-    throw new Error('MUBERT_API_ID and MUBERT_API_TOKEN environment variables are required');
-  }
 
   // Ensure output directory exists
   const dir = path.dirname(outputPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
+
+  // Step 0: Get PAT token
+  const pat = await getPat();
 
   // Step 1: Create track generation request
   const generateResponse = await fetch(`${MUBERT_API_BASE}/RecordTrackTTM`, {
@@ -47,7 +96,7 @@ export async function generateBGM(params: BGMParams): Promise<BGMResult> {
     body: JSON.stringify({
       method: 'RecordTrackTTM',
       params: {
-        pat: apiToken,
+        pat,
         duration,
         tags: [],
         prompt,
@@ -90,7 +139,7 @@ export async function generateBGM(params: BGMParams): Promise<BGMResult> {
       body: JSON.stringify({
         method: 'TrackStatus',
         params: {
-          pat: apiToken,
+          pat,
           task_id: taskId,
         },
       }),

@@ -1,6 +1,22 @@
 import type { ApiResponse } from '@/types';
 
-const BASE_URL = typeof window !== 'undefined' ? '' : 'http://localhost:3000';
+// In production, API calls go directly to Railway (Vercel can't run Python/ffmpeg/SQLite)
+// In development, API calls go to local server
+const RAILWAY_URL = 'https://myeighthproject-production.up.railway.app';
+
+function getBaseUrl(): string {
+  if (typeof window === 'undefined') {
+    // Server-side
+    return process.env.NODE_ENV === 'production' ? RAILWAY_URL : 'http://localhost:3000';
+  }
+  // Client-side
+  if (process.env.NODE_ENV === 'production') {
+    return RAILWAY_URL;
+  }
+  return '';
+}
+
+const BASE_URL = getBaseUrl();
 
 async function request<T>(
   url: string,
@@ -48,4 +64,21 @@ export async function apiPatch<T>(
 
 export async function apiDelete<T>(url: string): Promise<ApiResponse<T>> {
   return request<T>(url, { method: 'DELETE' });
+}
+
+/**
+ * Convert a server-side file path to a URL that can be used in the browser.
+ * e.g. /tmp/output/videos/1.mp4 → /api/files/videos/1.mp4
+ * e.g. C:\...\output\videos\1.mp4 → /api/files/videos/1.mp4
+ */
+export function getFileUrl(filePath: string): string {
+  const match = filePath.match(/output[/\\](.+)$/);
+  if (match) {
+    const relativePath = match[1].replace(/\\/g, '/');
+    if (typeof window !== 'undefined' && process.env.NODE_ENV === 'production') {
+      return `${RAILWAY_URL}/api/files/${relativePath}`;
+    }
+    return `/api/files/${relativePath}`;
+  }
+  return filePath;
 }

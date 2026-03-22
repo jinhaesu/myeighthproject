@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useSession, signOut } from 'next-auth/react';
+import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 interface NavItem {
@@ -114,10 +114,25 @@ const navGroups: NavGroup[] = [
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { data: session } = useSession();
+  const [userEmail, setUserEmail] = useState('');
 
-  const userEmail = session?.user?.email ?? '';
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.user?.email) {
+          setUserEmail(data.user.email);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const userInitial = userEmail ? userEmail[0].toUpperCase() : '?';
+
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    window.location.href = '/login';
+  };
 
   return (
     <aside className="fixed left-0 top-0 h-screen w-[260px] bg-[#111827] text-white flex flex-col z-40">
@@ -191,7 +206,7 @@ export default function Sidebar() {
             <p className="text-[11px] text-gray-500">대표이사</p>
           </div>
           <button
-            onClick={() => signOut({ callbackUrl: '/login' })}
+            onClick={handleLogout}
             title="로그아웃"
             className="p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-white/[0.06] transition-colors shrink-0"
           >

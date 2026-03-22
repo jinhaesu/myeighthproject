@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["python3", "python3Packages.pip", "ffmpeg", "noto-fonts-cjk-sans"]
+
+[phases.install]
+cmds = ["npm ci", "pip install edge-tts"]
+
+[start]
+cmd = "npm start"

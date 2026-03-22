@@ -25,9 +25,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const projectRoot = process.cwd();
+    const isProduction = process.env.NODE_ENV === 'production';
+    const outBase = isProduction ? '/tmp' : process.cwd();
+    const musicDir = path.join(outBase, 'output', 'music');
+    const fs = await import('fs');
+    if (!fs.existsSync(musicDir)) fs.mkdirSync(musicDir, { recursive: true });
     const filename = contentId ? `${contentId}.mp3` : `${Date.now()}.mp3`;
-    const outputPath = path.join(projectRoot, 'output', 'music', filename);
+    const outputPath = path.join(musicDir, filename);
 
     const result = await generateBGM({
       prompt,
@@ -57,16 +61,17 @@ export async function POST(request: Request) {
     const durationMs = Date.now() - startTime;
     const msg = error instanceof Error ? error.message : 'Unknown error';
 
-    const contentId = (await request.clone().json().catch(() => ({}))).content_id;
-    if (contentId) {
-      try {
+    // Error logging - best effort
+    try {
+      const errorBody = await request.clone().json().catch(() => ({})) as { content_id?: number };
+      if (errorBody.content_id) {
         run(
           `INSERT INTO generation_logs (content_id, step, status, error_message, duration_ms) VALUES (?, 'bgm', 'failed', ?, ?)`,
-          [contentId, msg, durationMs]
+          [errorBody.content_id, msg, durationMs]
         );
-      } catch {
-        // Ignore logging errors
       }
+    } catch {
+      // Ignore logging errors
     }
 
     return Response.json(

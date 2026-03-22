@@ -3,12 +3,14 @@ import { generateVideo } from '@/lib/video';
 import type {
   GenerateVideoRequest,
   ApiResponse,
+  ScriptSection,
 } from '@/types';
 
 interface ContentRow {
   id: number;
   audio_path: string | null;
   subtitle_path: string | null;
+  sections: string | null;
   status: string;
 }
 
@@ -30,7 +32,7 @@ export async function POST(request: Request) {
 
     // Fetch content
     const content = queryOne<ContentRow>(
-      'SELECT id, audio_path, subtitle_path, status FROM contents WHERE id = ?',
+      'SELECT id, audio_path, subtitle_path, sections, status FROM contents WHERE id = ?',
       [contentId]
     );
 
@@ -41,12 +43,33 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!content.audio_path || !content.subtitle_path) {
+    if (!content.audio_path) {
       return Response.json(
-        { success: false, error: 'Content has no audio/subtitles. Generate TTS first.' } satisfies ApiResponse,
+        { success: false, error: 'Content has no audio. Generate TTS first.' } satisfies ApiResponse,
         { status: 400 }
       );
     }
+
+    // Parse sections from content DB or request body
+    let sections: Array<{ body: string; duration_seconds: number }> | undefined;
+
+    if (body.sections && body.sections.length > 0) {
+      sections = body.sections;
+    } else if (content.sections) {
+      try {
+        const parsed: ScriptSection[] = JSON.parse(content.sections);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          sections = parsed.map((s) => ({
+            body: s.body,
+            duration_seconds: s.duration_seconds,
+          }));
+        }
+      } catch {
+        // sections parsing failed, will use legacy mode
+      }
+    }
+
+    const generateImages = body.generate_images !== false; // default true
 
     // Log start
     run(
@@ -57,6 +80,8 @@ export async function POST(request: Request) {
           backgroundColor: body.background_color,
           backgroundImage: body.background_image,
           fontSize: body.font_size,
+          sectionCount: sections?.length ?? 0,
+          generateImages,
         }),
       ]
     );
@@ -70,10 +95,18 @@ export async function POST(request: Request) {
         backgroundColor: body.background_color,
         backgroundImage: body.background_image,
         fontSize: body.font_size,
+        sections,
+        generateImages,
       }
     );
 
     const durationMs = Date.now() - startTime;
+
+    // Duration warning for short-form
+    let durationWarning: string | undefined;
+    if (result.durationSeconds > 60) {
+      durationWarning = `Video duration (${Math.round(result.durationSeconds)}s) exceeds 60s short-form limit. Consider trimming the script.`;
+    }
 
     // Update content
     run(
@@ -90,6 +123,8 @@ export async function POST(request: Request) {
           videoPath: result.videoPath,
           videoSizeBytes: result.videoSizeBytes,
           durationSeconds: result.durationSeconds,
+          slideshowMode: !!sections,
+          sectionCount: sections?.length ?? 0,
         }),
         durationMs,
       ]
@@ -102,6 +137,8 @@ export async function POST(request: Request) {
         videoSizeBytes: result.videoSizeBytes,
         durationSeconds: result.durationSeconds,
         generationTimeMs: durationMs,
+        slideshowMode: !!sections,
+        ...(durationWarning && { durationWarning }),
       },
     } satisfies ApiResponse);
   } catch (error) {

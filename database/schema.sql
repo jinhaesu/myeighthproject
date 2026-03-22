@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 CREATE TABLE IF NOT EXISTS generation_logs (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   content_id      INTEGER NOT NULL REFERENCES contents(id) ON DELETE CASCADE,
-  step            TEXT    NOT NULL CHECK (step IN ('script', 'tts', 'video', 'caption', 'pipeline')),
+  step            TEXT    NOT NULL CHECK (step IN ('script', 'tts', 'video', 'caption', 'pipeline', 'image', 'bgm', 'ai_video')),
   status          TEXT    NOT NULL CHECK (status IN ('started', 'completed', 'failed')),
   input_params    TEXT,          -- JSON
   output_result   TEXT,          -- JSON

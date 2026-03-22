@@ -7,7 +7,7 @@ import Button from '@/components/ui/Button';
 import Select from '@/components/ui/Select';
 import TextArea from '@/components/ui/TextArea';
 import ProgressBar from '@/components/ui/ProgressBar';
-import { apiGet, apiPost } from '@/lib/api';
+import { apiGet, apiPost, getFileUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { Content, ContentType, Language, PlatformAccount, Platform } from '@/types';
 
@@ -416,44 +416,21 @@ export default function CreatePage() {
                     )}
                   </Button>
 
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={bgmGenerating || bgmGenerated || !contentId}
-                    onClick={async () => {
-                      if (!contentId) return;
-                      setBgmGenerating(true);
-                      try {
-                        await apiPost('/api/generate/bgm', { content_id: contentId });
-                        setBgmGenerated(true);
-                      } catch (err) {
-                        setError(err instanceof Error ? err.message : 'BGM 생성 실패');
-                      } finally {
-                        setBgmGenerating(false);
-                      }
-                    }}
-                  >
-                    {bgmGenerating ? (
-                      <>
-                        <div className="w-3 h-3 border-2 border-[#1a5c2e] border-t-transparent rounded-full animate-spin" />
-                        BGM 생성 중...
-                      </>
-                    ) : bgmGenerated ? (
-                      <>
-                        <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        BGM 생성됨
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-                        </svg>
-                        Mubert BGM 생성
-                      </>
-                    )}
-                  </Button>
+                  <div className="relative group">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={true}
+                    >
+                      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                      </svg>
+                      Mubert BGM (설정 필요)
+                    </Button>
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 bg-gray-800 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                      Mubert API 설정이 필요합니다. BGM 없이도 영상 생성 가능합니다.
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -504,7 +481,7 @@ export default function CreatePage() {
                 {loading ? (
                   <div className="flex items-center gap-3">
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>영상 생성 중...</span>
+                    <span>AI가 영상을 생성하고 있습니다... (섹션당 약 30초 소요)</span>
                   </div>
                 ) : (
                   <>
@@ -512,7 +489,7 @@ export default function CreatePage() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                    영상 생성
+                    AI 영상 생성 (Runway + DALL-E)
                   </>
                 )}
               </Button>
@@ -532,7 +509,7 @@ export default function CreatePage() {
               {/* Video preview */}
               <div className="bg-black rounded-2xl overflow-hidden aspect-video flex items-center justify-center">
                 <video
-                  src={videoPath}
+                  src={getFileUrl(videoPath)}
                   controls
                   className="w-full h-full"
                 >
@@ -544,7 +521,7 @@ export default function CreatePage() {
               {/* Actions */}
               <div className="flex items-center gap-3">
                 <a
-                  href={videoPath}
+                  href={getFileUrl(videoPath)}
                   download
                   className="inline-flex items-center gap-2 text-sm font-medium text-[#1a5c2e] hover:text-[#144723] transition-colors"
                 >
