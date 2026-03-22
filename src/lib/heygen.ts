@@ -25,7 +25,7 @@ const POLL_INTERVAL_MS = 10_000;       // 10 seconds
 const MAX_POLL_ATTEMPTS = 60;          // 10 minutes max
 
 // Default avatar/voice settings
-const DEFAULT_AVATAR_ID = 'Angela-inTshirt-20220820';
+const DEFAULT_AVATAR_ID = 'Abigail_expressive_2024112501';
 const DEFAULT_AVATAR_STYLE = 'normal';
 const DEFAULT_KO_VOICE_ID = 'f04b4063c0854dc087a47b56805e0f3d';  // HeyGen Korean female
 const DEFAULT_EN_VOICE_ID = '1bd001e7e50f421d891986aad5158bc8';  // HeyGen English female
