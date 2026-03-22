@@ -35,9 +35,20 @@ export async function generateTTS(
   const { voice = DEFAULT_VOICE, rate = DEFAULT_RATE } = options;
 
   const projectRoot = process.cwd();
-  const scriptPath = path.join(projectRoot, 'scripts', 'tts_generate.py');
-  const audioPath = path.join(projectRoot, 'output', 'audio', `${contentId}.mp3`);
-  const subtitlePath = path.join(projectRoot, 'output', 'subtitles', `${contentId}.vtt`);
+  const scriptCandidates = [
+    path.join(projectRoot, 'scripts', 'tts_generate.py'),
+    '/app/scripts/tts_generate.py',
+  ];
+  const scriptPath = scriptCandidates.find(p => require('fs').existsSync(p)) || scriptCandidates[0];
+
+  const isProduction = process.env.NODE_ENV === 'production';
+  const outBase = isProduction ? '/tmp' : projectRoot;
+  const audioDir = path.join(outBase, 'output', 'audio');
+  const subDir = path.join(outBase, 'output', 'subtitles');
+  require('fs').mkdirSync(audioDir, { recursive: true });
+  require('fs').mkdirSync(subDir, { recursive: true });
+  const audioPath = path.join(audioDir, `${contentId}.mp3`);
+  const subtitlePath = path.join(subDir, `${contentId}.vtt`);
 
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
 

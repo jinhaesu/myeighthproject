@@ -55,8 +55,9 @@ export async function generateVideo(
     height = DEFAULT_HEIGHT,
   } = options;
 
-  const projectRoot = process.cwd();
-  const videoPath = path.join(projectRoot, 'output', 'videos', `${contentId}.mp4`);
+  const isProduction = process.env.NODE_ENV === 'production';
+  const outBase = isProduction ? '/tmp' : process.cwd();
+  const videoPath = path.join(outBase, 'output', 'videos', `${contentId}.mp4`);
 
   // Ensure output directory exists
   const videoDir = path.dirname(videoPath);

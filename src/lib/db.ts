@@ -7,7 +7,11 @@ import fs from 'fs';
 let _db: Database.Database | null = null;
 
 function getDbPath(): string {
-  const dbDir = path.join(process.cwd(), 'database');
+  // Railway/Docker: /tmp is always writable
+  // Local dev: use project directory
+  const isProduction = process.env.NODE_ENV === 'production';
+  const baseDir = isProduction ? '/tmp' : process.cwd();
+  const dbDir = path.join(baseDir, 'database');
   if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true });
   }
@@ -34,23 +38,110 @@ export function getDb(): Database.Database {
 }
 
 function initSchema(db: Database.Database): void {
-  const schemaPath = path.join(process.cwd(), 'database', 'schema.sql');
+  // Try multiple paths for schema.sql
+  const candidates = [
+    path.join(process.cwd(), 'database', 'schema.sql'),
+    path.join(__dirname, '..', '..', '..', 'database', 'schema.sql'),
+    '/app/database/schema.sql', // Docker path
+  ];
 
-  if (fs.existsSync(schemaPath)) {
-    const schema = fs.readFileSync(schemaPath, 'utf-8');
-    // Split by statements and execute individually (skip PRAGMA lines already set)
-    const statements = schema
-      .split(';')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0)
-      .filter((s) => !s.startsWith('PRAGMA'));
+  let schema: string | null = null;
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      schema = fs.readFileSync(p, 'utf-8');
+      break;
+    }
+  }
 
-    for (const stmt of statements) {
-      try {
-        db.exec(stmt + ';');
-      } catch {
-        // Table/index/trigger already exists — safe to ignore
-      }
+  if (!schema) {
+    // Inline fallback schema for production
+    schema = `
+      CREATE TABLE IF NOT EXISTS contents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        content_type TEXT NOT NULL CHECK(content_type IN ('health_info','recipe','nutrition_tip')),
+        status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','script_ready','audio_ready','video_ready','published')),
+        language TEXT NOT NULL DEFAULT 'ko' CHECK(language IN ('ko','en')),
+        script TEXT,
+        sections TEXT,
+        audio_path TEXT,
+        subtitle_path TEXT,
+        video_path TEXT,
+        thumbnail_path TEXT,
+        scheduled_date TEXT,
+        tags TEXT,
+        metadata TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS calendar_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content_id INTEGER REFERENCES contents(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        event_date TEXT NOT NULL,
+        event_type TEXT NOT NULL DEFAULT 'health_info',
+        status TEXT NOT NULL DEFAULT 'draft',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS generation_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content_id INTEGER NOT NULL REFERENCES contents(id) ON DELETE CASCADE,
+        step TEXT NOT NULL CHECK(step IN ('script','tts','video','caption','pipeline','image','bgm','ai_video')),
+        status TEXT NOT NULL CHECK(status IN ('started','completed','failed')),
+        input_params TEXT,
+        output_result TEXT,
+        error_message TEXT,
+        duration_ms INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS prompt_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        content_type TEXT NOT NULL,
+        template TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS platform_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        platform TEXT NOT NULL CHECK(platform IN ('instagram','youtube','tiktok','facebook')),
+        account_name TEXT NOT NULL,
+        handle TEXT,
+        credentials TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS publish_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content_id INTEGER NOT NULL REFERENCES contents(id),
+        platform_account_id INTEGER NOT NULL REFERENCES platform_accounts(id),
+        status TEXT NOT NULL DEFAULT 'scheduled' CHECK(status IN ('scheduled','publishing','published','failed','cancelled')),
+        scheduled_at TEXT NOT NULL,
+        published_at TEXT,
+        post_url TEXT,
+        caption TEXT,
+        hashtags TEXT,
+        error_message TEXT,
+        retry_count INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `;
+  }
+
+  const statements = schema
+    .split(';')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .filter((s) => !s.startsWith('PRAGMA'));
+
+  for (const stmt of statements) {
+    try {
+      db.exec(stmt + ';');
+    } catch {
+      // Table/index/trigger already exists — safe to ignore
     }
   }
 }
