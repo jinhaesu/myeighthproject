@@ -180,6 +180,7 @@ export interface PipelineRequest {
   generate_image?: boolean;      // Auto-generate thumbnail with DALL-E
   generate_bgm?: boolean;        // Auto-generate BGM with Mubert
   video_type?: VideoType;        // 'slideshow' (DALL-E + Runway) or 'heygen' (AI avatar)
+  avatar_id?: string;            // HeyGen avatar ID
 }
 
 export interface BulkPipelineRequest {

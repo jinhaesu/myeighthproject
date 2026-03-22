@@ -380,6 +380,7 @@ export async function POST(request: Request) {
         const heygenResult = await generateHeyGenVideo({
           script: scriptText,
           language: language,
+          avatarId: body.avatar_id,
           outputPath: videoPath,
         });
 

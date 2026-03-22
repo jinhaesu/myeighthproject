@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Select from '@/components/ui/Select';
@@ -18,6 +18,17 @@ import type {
   PlanItem,
   VideoType,
 } from '@/types';
+
+// ─── Avatar Types ───────────────────────────────────────────────────────────
+
+interface AvatarInfo {
+  id: string;
+  name: string;
+  category: 'custom' | 'professional' | 'casual' | 'diverse';
+  preview_url: string | null;
+}
+
+const DEFAULT_AVATAR_ID = '289259c61ef142ebba0bb463f35f864b';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -44,7 +55,7 @@ const STEP_LABELS: Record<string, string> = {
   script: '스크립트 생성 (AI)',
   image: '이미지 생성 (DALL-E 3)',
   tts: 'TTS 음성 생성',
-  bgm: 'BGM 생성 (설정 필요)',
+  bgm: 'BGM 생성 (Mubert AI)',
   video: '영상 합성',
   heygen: 'AI 아바타 영상 (HeyGen)',
   caption: '캡션/해시태그 생성',
@@ -126,11 +137,31 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
   const [premiumMode, setPremiumMode] = useState(false);
   const [videoType, setVideoType] = useState<VideoType>('heygen');
 
+  const [avatars, setAvatars] = useState<AvatarInfo[]>([]);
+  const [selectedAvatarId, setSelectedAvatarId] = useState<string>(DEFAULT_AVATAR_ID);
+
   const [running, setRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [completedSteps, setCompletedSteps] = useState<PipelineStepResult[]>([]);
   const [result, setResult] = useState<PipelineResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Load avatars
+  const loadAvatars = useCallback(async () => {
+    if (avatars.length > 0) return;
+    try {
+      const res = await apiGet<AvatarInfo[]>('/api/avatars');
+      if (res.data) setAvatars(res.data);
+    } catch {
+      // silently fail
+    }
+  }, [avatars.length]);
+
+  useEffect(() => {
+    if (videoType === 'heygen') {
+      loadAvatars();
+    }
+  }, [videoType, loadAvatars]);
 
   const progressPercent = result
     ? 100
@@ -173,6 +204,7 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
         auto_caption: autoCaption,
         premium_mode: premiumMode,
         video_type: videoType,
+        avatar_id: videoType === 'heygen' ? selectedAvatarId : undefined,
       });
 
       clearInterval(stepTimer);
@@ -470,6 +502,25 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
             </div>
           </div>
 
+          {/* Avatar Selection (HeyGen only) */}
+          {videoType === 'heygen' && avatars.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-[#1a1a2e]">아바타 선택</span>
+              <select
+                value={selectedAvatarId}
+                onChange={(e) => setSelectedAvatarId(e.target.value)}
+                disabled={running}
+                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-[#1a1a2e] focus:border-[#1a5c2e] focus:outline-none focus:ring-2 focus:ring-[#1a5c2e]/20 disabled:opacity-50"
+              >
+                {avatars.map((avatar) => (
+                  <option key={avatar.id} value={avatar.id}>
+                    {avatar.name} ({avatar.category === 'custom' ? '커스텀' : avatar.category === 'professional' ? '프로' : avatar.category === 'casual' ? '캐주얼' : '다양성'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Premium Mode Toggle */}
           <div className={cn(
             'rounded-xl border p-4 transition-all',
@@ -532,9 +583,9 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
                   <span className="font-medium text-amber-700">DALL-E 3</span>
                   <p className="text-amber-500">AI 이미지</p>
                 </div>
-                <div className="bg-white/80 rounded-lg px-2 py-1.5 text-center opacity-50">
-                  <span className="font-medium text-gray-500">Mubert</span>
-                  <p className="text-gray-400">설정 필요</p>
+                <div className="bg-white/80 rounded-lg px-2 py-1.5 text-center">
+                  <span className="font-medium text-amber-700">Mubert</span>
+                  <p className="text-amber-500">AI BGM</p>
                 </div>
               </div>
             )}

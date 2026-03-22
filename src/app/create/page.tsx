@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
@@ -10,6 +10,24 @@ import ProgressBar from '@/components/ui/ProgressBar';
 import { apiGet, apiPost, getFileUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { Content, ContentType, Language, PlatformAccount, Platform } from '@/types';
+
+// ─── Avatar Types ───────────────────────────────────────────────────────────
+
+interface AvatarInfo {
+  id: string;
+  name: string;
+  category: 'custom' | 'professional' | 'casual' | 'diverse';
+  preview_url: string | null;
+}
+
+const DEFAULT_AVATAR_ID = '289259c61ef142ebba0bb463f35f864b';
+
+const CATEGORY_LABELS: Record<string, string> = {
+  custom: '커스텀',
+  professional: '프로',
+  casual: '캐주얼',
+  diverse: '다양성',
+};
 
 const steps = [
   { number: 1, label: '기본 정보' },
@@ -61,6 +79,9 @@ export default function CreatePage() {
   // Step 3 state
   const [videoType, setVideoType] = useState<'slideshow' | 'heygen'>('heygen');
   const [videoPath, setVideoPath] = useState<string | null>(null);
+  const [avatars, setAvatars] = useState<AvatarInfo[]>([]);
+  const [selectedAvatarId, setSelectedAvatarId] = useState<string>(DEFAULT_AVATAR_ID);
+  const [avatarsLoading, setAvatarsLoading] = useState(false);
 
   // Step 4 state
   const [platformAccounts, setPlatformAccounts] = useState<PlatformAccount[]>([]);
@@ -72,6 +93,28 @@ export default function CreatePage() {
   // Loading & error
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Load avatars when entering step 3 with heygen selected
+  const loadAvatars = useCallback(async () => {
+    if (avatars.length > 0) return;
+    setAvatarsLoading(true);
+    try {
+      const res = await apiGet<AvatarInfo[]>('/api/avatars');
+      if (res.data) {
+        setAvatars(res.data);
+      }
+    } catch {
+      // silently fail - will use default avatar
+    } finally {
+      setAvatarsLoading(false);
+    }
+  }, [avatars.length]);
+
+  useEffect(() => {
+    if (currentStep === 3 && videoType === 'heygen') {
+      loadAvatars();
+    }
+  }, [currentStep, videoType, loadAvatars]);
 
   const progressPercent = ((currentStep - 1) / (steps.length)) * 100;
 
@@ -150,7 +193,7 @@ export default function CreatePage() {
         // HeyGen AI avatar video
         const res = await apiPost<{ videoPath: string }>('/api/generate/heygen', {
           content_id: contentId,
-          avatar_style: 'professional',
+          avatar_id: selectedAvatarId,
         });
         if (res.data) {
           setVideoPath(res.data.videoPath);
@@ -429,21 +472,44 @@ export default function CreatePage() {
                     )}
                   </Button>
 
-                  <div className="relative group">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={true}
-                    >
-                      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-                      </svg>
-                      Mubert BGM (설정 필요)
-                    </Button>
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 bg-gray-800 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                      Mubert API 설정이 필요합니다. BGM 없이도 영상 생성 가능합니다.
-                    </div>
-                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={bgmGenerating || bgmGenerated || !contentId}
+                    onClick={async () => {
+                      if (!contentId) return;
+                      setBgmGenerating(true);
+                      try {
+                        await apiPost('/api/generate/bgm', { content_id: contentId });
+                        setBgmGenerated(true);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : 'BGM 생성 실패');
+                      } finally {
+                        setBgmGenerating(false);
+                      }
+                    }}
+                  >
+                    {bgmGenerating ? (
+                      <>
+                        <div className="w-3 h-3 border-2 border-[#1a5c2e] border-t-transparent rounded-full animate-spin" />
+                        BGM 생성 중...
+                      </>
+                    ) : bgmGenerated ? (
+                      <>
+                        <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        BGM 생성됨
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                        </svg>
+                        BGM 생성 (Mubert AI)
+                      </>
+                    )}
+                  </Button>
                 </div>
               </div>
 
@@ -562,6 +628,86 @@ export default function CreatePage() {
                   </p>
                 </label>
               </div>
+
+              {/* Avatar Selection (HeyGen only) */}
+              {videoType === 'heygen' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-[#111827]">아바타 선택</span>
+                    {avatarsLoading && (
+                      <div className="flex items-center gap-2 text-xs text-gray-400">
+                        <div className="w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+                        불러오는 중...
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-[320px] overflow-y-auto pr-1">
+                    {avatars.map((avatar) => (
+                      <button
+                        key={avatar.id}
+                        type="button"
+                        onClick={() => setSelectedAvatarId(avatar.id)}
+                        className={cn(
+                          'flex flex-col items-center gap-2 rounded-xl border-2 p-3 transition-all duration-200 text-left',
+                          selectedAvatarId === avatar.id
+                            ? 'border-[#1a5c2e] bg-green-50 shadow-md ring-2 ring-[#1a5c2e]/10'
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                        )}
+                      >
+                        {/* Avatar icon or preview */}
+                        <div className={cn(
+                          'w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold shrink-0',
+                          avatar.category === 'custom'
+                            ? 'bg-amber-100 text-amber-700'
+                            : avatar.category === 'professional'
+                              ? 'bg-blue-100 text-blue-700'
+                              : avatar.category === 'casual'
+                                ? 'bg-green-100 text-green-700'
+                                : 'bg-purple-100 text-purple-700'
+                        )}>
+                          {avatar.preview_url ? (
+                            <img
+                              src={avatar.preview_url}
+                              alt={avatar.name}
+                              className="w-full h-full rounded-full object-cover"
+                            />
+                          ) : (
+                            avatar.name.charAt(0)
+                          )}
+                        </div>
+                        <div className="text-center w-full min-w-0">
+                          <p className={cn(
+                            'text-xs font-medium truncate',
+                            selectedAvatarId === avatar.id ? 'text-[#1a5c2e]' : 'text-[#111827]'
+                          )}>
+                            {avatar.name}
+                          </p>
+                          <span className={cn(
+                            'text-[10px] px-1.5 py-0.5 rounded-full inline-block mt-1',
+                            avatar.category === 'custom'
+                              ? 'bg-amber-100 text-amber-600'
+                              : 'bg-gray-100 text-gray-500'
+                          )}>
+                            {CATEGORY_LABELS[avatar.category] || avatar.category}
+                          </span>
+                        </div>
+                        {selectedAvatarId === avatar.id && (
+                          <div className="absolute top-1 right-1 w-5 h-5 bg-[#1a5c2e] rounded-full flex items-center justify-center">
+                            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                            </svg>
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  {avatars.length > 0 && (
+                    <p className="text-xs text-[#6b7280]">
+                      선택된 아바타: <span className="font-medium text-[#111827]">{avatars.find(a => a.id === selectedAvatarId)?.name || '기본'}</span>
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Generate Button */}
               <div className="text-center pt-2">
