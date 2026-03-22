@@ -79,17 +79,9 @@ export async function generateVideo(
     .replace(/:/g, '\\:');
 
   // Build subtitle filter with styling
-  const subtitleFilter = [
-    `subtitles='${subtitlePathEscaped}'`,
-    `force_style='FontName=Malgun Gothic Bold`,
-    `FontSize=${fontSize}`,
-    `PrimaryColour=&H00FFFFFF`,
-    `OutlineColour=&H00000000`,
-    `Outline=2`,
-    `Shadow=1`,
-    `MarginV=120`,
-    `Alignment=2'`,
-  ].join(':');
+  // Note: libass uses 'Fontsize' (lowercase s) on some builds
+  const fontName = process.platform === 'win32' ? 'Malgun Gothic Bold' : 'Noto Sans CJK KR Bold';
+  const subtitleFilter = `subtitles='${subtitlePathEscaped}':force_style='Fontname=${fontName},Fontsize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=120,Alignment=2'`;
 
   // Build ffmpeg args
   const args: string[] = ['-y'];
