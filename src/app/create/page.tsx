@@ -481,7 +481,7 @@ export default function CreatePage() {
                 {loading ? (
                   <div className="flex items-center gap-3">
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>영상 생성 중...</span>
+                    <span>AI가 영상을 생성하고 있습니다... (섹션당 약 30초 소요)</span>
                   </div>
                 ) : (
                   <>
@@ -489,7 +489,7 @@ export default function CreatePage() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                    영상 생성
+                    AI 영상 생성 (Runway + DALL-E)
                   </>
                 )}
               </Button>

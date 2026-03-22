@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { promisify } from 'util';
 import OpenAI from 'openai';
+import { generateAIVideo } from './runway';
 
 const execFileAsync = promisify(execFile);
 
@@ -34,7 +35,7 @@ const DEFAULT_WIDTH = 1080;
 const DEFAULT_HEIGHT = 1920;
 const DEFAULT_BG_COLOR = '#1a1a2e';
 const DEFAULT_FONT_SIZE = 42;
-const MAX_SECTION_IMAGES = 5;
+const MAX_SECTION_IMAGES = 4;
 const MAX_SHORT_FORM_DURATION = 60;
 
 function getDefaultFontPath(): string {
@@ -64,11 +65,16 @@ function buildImagePrompt(sectionBody: string): string {
   return `Professional food photography style, ${topic}, clean bright background, high quality, appetizing, warm lighting, 9:16 vertical format. No text overlay.`;
 }
 
+interface SectionImageResult {
+  imagePath: string;
+  imageUrl: string;
+}
+
 async function generateSectionImage(
   client: OpenAI,
   sectionBody: string,
   outputPath: string,
-): Promise<string | null> {
+): Promise<SectionImageResult | null> {
   try {
     const prompt = buildImagePrompt(sectionBody);
 
@@ -103,7 +109,7 @@ async function generateSectionImage(
     }
 
     fs.writeFileSync(outputPath, buffer);
-    return outputPath;
+    return { imagePath: outputPath, imageUrl };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[Video] DALL-E image generation failed: ${msg}`);
@@ -114,7 +120,7 @@ async function generateSectionImage(
 async function generateSectionImages(
   sections: SectionInput[],
   contentId: number,
-): Promise<(string | null)[]> {
+): Promise<(SectionImageResult | null)[]> {
   const isProduction = process.env.NODE_ENV === 'production';
   const outBase = isProduction ? '/tmp' : process.cwd();
   const imageDir = path.join(outBase, 'output', 'images');
@@ -127,16 +133,16 @@ async function generateSectionImages(
 
   // Limit to MAX_SECTION_IMAGES
   const limitedSections = sections.slice(0, MAX_SECTION_IMAGES);
-  const imagePaths: (string | null)[] = [];
+  const imageResults: (SectionImageResult | null)[] = [];
 
   for (let i = 0; i < limitedSections.length; i++) {
     const outputPath = path.join(imageDir, `${contentId}_section_${i}.png`);
     console.log(`[Video] Generating image ${i + 1}/${limitedSections.length} for content ${contentId}...`);
     const result = await generateSectionImage(client, limitedSections[i].body, outputPath);
-    imagePaths.push(result);
+    imageResults.push(result);
   }
 
-  return imagePaths;
+  return imageResults;
 }
 
 // ─── Solid color fallback image ────────────────────────────────────────────
@@ -259,44 +265,95 @@ async function generateSlideshowVideo(
 ): Promise<VideoResult> {
   const { backgroundColor, fontSize, width, height, generateImages, videoPath } = opts;
 
-  // Limit sections
-  const limitedSections = sections.slice(0, MAX_SECTION_IMAGES);
-
-  // Generate or create fallback images for each section
-  let sectionImagePaths: (string | null)[];
-
-  if (generateImages) {
-    console.log(`[Video] Generating DALL-E images for ${limitedSections.length} sections...`);
-    sectionImagePaths = await generateSectionImages(limitedSections, contentId);
-  } else {
-    sectionImagePaths = limitedSections.map(() => null);
-  }
-
-  // For any section that failed image generation, create solid color fallback
   const isProduction = process.env.NODE_ENV === 'production';
   const outBase = isProduction ? '/tmp' : process.cwd();
   const imageDir = path.join(outBase, 'output', 'images');
+  const clipDir = path.join(outBase, 'output', 'videos');
 
-  const finalImagePaths: string[] = [];
+  if (!fs.existsSync(clipDir)) {
+    fs.mkdirSync(clipDir, { recursive: true });
+  }
+
+  // Limit sections
+  const limitedSections = sections.slice(0, MAX_SECTION_IMAGES);
+
+  // Step 1: Generate DALL-E images for each section
+  let sectionImageResults: (SectionImageResult | null)[];
+
+  if (generateImages) {
+    console.log(`[Video] Generating DALL-E images for ${limitedSections.length} sections...`);
+    sectionImageResults = await generateSectionImages(limitedSections, contentId);
+  } else {
+    sectionImageResults = limitedSections.map(() => null);
+  }
+
+  // Step 2: Convert each DALL-E image to a Runway AI video clip (with fallback)
+  const hasRunwayKey = !!process.env.RUNWAY_API_KEY;
+  const clipPaths: string[] = [];
+  // Track which sections used static image fallback (need -loop 1 -t in ffmpeg)
+  const isStaticImage: boolean[] = [];
+
   for (let i = 0; i < limitedSections.length; i++) {
-    if (sectionImagePaths[i] && fs.existsSync(sectionImagePaths[i]!)) {
-      finalImagePaths.push(sectionImagePaths[i]!);
-    } else {
-      // Generate solid color fallback
-      const fallbackPath = path.join(imageDir, `${contentId}_fallback_${i}.png`);
-      console.log(`[Video] Using solid color fallback for section ${i}`);
-      await generateSolidColorImage(backgroundColor, width, height, fallbackPath);
-      finalImagePaths.push(fallbackPath);
+    const imageResult = sectionImageResults[i];
+    const clipPath = path.join(clipDir, `${contentId}_clip_${i}.mp4`);
+    let clipGenerated = false;
+
+    // Try Runway image-to-video if we have an image URL and API key
+    if (hasRunwayKey && imageResult?.imageUrl) {
+      try {
+        const sectionBody = limitedSections[i].body.slice(0, 150).replace(/\n/g, ' ').trim();
+        const runwayPrompt = `Smooth cinematic motion, gentle camera movement, warm lighting. ${sectionBody}`;
+
+        console.log(`[Video] Generating Runway AI video clip ${i + 1}/${limitedSections.length}...`);
+        await generateAIVideo({
+          prompt: runwayPrompt,
+          imageUrl: imageResult.imageUrl,
+          duration: 5,
+          outputPath: clipPath,
+        });
+
+        if (fs.existsSync(clipPath) && fs.statSync(clipPath).size > 0) {
+          clipPaths.push(clipPath);
+          isStaticImage.push(false);
+          clipGenerated = true;
+          console.log(`[Video] Runway clip ${i + 1} generated successfully`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[Video] Runway failed for section ${i}, falling back to static image: ${msg}`);
+      }
+    }
+
+    // Fallback: use DALL-E static image or solid color
+    if (!clipGenerated) {
+      if (imageResult?.imagePath && fs.existsSync(imageResult.imagePath)) {
+        console.log(`[Video] Using static image fallback for section ${i}`);
+        clipPaths.push(imageResult.imagePath);
+        isStaticImage.push(true);
+      } else {
+        // Generate solid color fallback
+        const fallbackPath = path.join(imageDir, `${contentId}_fallback_${i}.png`);
+        console.log(`[Video] Using solid color fallback for section ${i}`);
+        await generateSolidColorImage(backgroundColor, width, height, fallbackPath);
+        clipPaths.push(fallbackPath);
+        isStaticImage.push(true);
+      }
     }
   }
 
-  // Build ffmpeg command for slideshow
+  // Step 3: Build ffmpeg command to concat clips + audio + subtitles
   const args: string[] = ['-y'];
 
-  // Add each image as input with its duration
+  // Add each clip/image as input
   for (let i = 0; i < limitedSections.length; i++) {
-    const duration = Math.max(limitedSections[i].duration_seconds || 5, 1);
-    args.push('-loop', '1', '-t', String(duration), '-i', finalImagePaths[i]);
+    if (isStaticImage[i]) {
+      // Static image: loop for section duration
+      const duration = Math.max(limitedSections[i].duration_seconds || 5, 1);
+      args.push('-loop', '1', '-t', String(duration), '-i', clipPaths[i]);
+    } else {
+      // Video clip from Runway
+      args.push('-i', clipPaths[i]);
+    }
   }
 
   // Add audio input
@@ -349,7 +406,7 @@ async function generateSlideshowVideo(
 
   try {
     const { stderr } = await execFileAsync('ffmpeg', args, {
-      timeout: 600_000, // 10 minutes (image generation + encoding)
+      timeout: 600_000, // 10 minutes
       maxBuffer: 50 * 1024 * 1024,
     });
 
@@ -371,13 +428,13 @@ async function generateSlideshowVideo(
       // ffprobe not available
     }
 
-    // Cleanup section images
-    cleanupSectionImages(contentId, outBase);
+    // Cleanup section images and video clips
+    cleanupSectionAssets(contentId, outBase);
 
     return { videoPath, videoSizeBytes, durationSeconds };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    throw new Error(`Slideshow video generation failed: ${msg}`);
+    throw new Error(`Video generation failed: ${msg}`);
   }
 }
 
@@ -490,14 +547,27 @@ async function generateLegacyVideo(
 
 // ─── Cleanup ───────────────────────────────────────────────────────────────
 
-function cleanupSectionImages(contentId: number, outBase: string): void {
+function cleanupSectionAssets(contentId: number, outBase: string): void {
   try {
+    // Cleanup section images
     const imageDir = path.join(outBase, 'output', 'images');
-    if (!fs.existsSync(imageDir)) return;
-    const files = fs.readdirSync(imageDir);
-    for (const file of files) {
-      if (file.startsWith(`${contentId}_section_`) || file.startsWith(`${contentId}_fallback_`)) {
-        fs.unlinkSync(path.join(imageDir, file));
+    if (fs.existsSync(imageDir)) {
+      const imageFiles = fs.readdirSync(imageDir);
+      for (const file of imageFiles) {
+        if (file.startsWith(`${contentId}_section_`) || file.startsWith(`${contentId}_fallback_`)) {
+          fs.unlinkSync(path.join(imageDir, file));
+        }
+      }
+    }
+
+    // Cleanup Runway video clips
+    const videoDir = path.join(outBase, 'output', 'videos');
+    if (fs.existsSync(videoDir)) {
+      const videoFiles = fs.readdirSync(videoDir);
+      for (const file of videoFiles) {
+        if (file.startsWith(`${contentId}_clip_`)) {
+          fs.unlinkSync(path.join(videoDir, file));
+        }
       }
     }
   } catch {
