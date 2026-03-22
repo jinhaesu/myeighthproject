@@ -7,7 +7,7 @@ import Button from '@/components/ui/Button';
 import Select from '@/components/ui/Select';
 import TextArea from '@/components/ui/TextArea';
 import ProgressBar from '@/components/ui/ProgressBar';
-import { apiGet, apiPost, getFileUrl } from '@/lib/api';
+import { apiGet, apiPost, apiPatch, getFileUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { Content, ContentType, Language, PlatformAccount, Platform, ScriptSection } from '@/types';
 
@@ -76,6 +76,8 @@ export default function CreatePage() {
   const [imageGenerating, setImageGenerating] = useState(false);
   const [bgmGenerated, setBgmGenerated] = useState(false);
   const [bgmGenerating, setBgmGenerating] = useState(false);
+  const [sectionsDirty, setSectionsDirty] = useState(false);
+  const [sectionsSaving, setSectionsSaving] = useState(false);
 
   // Step 3 state
   const [videoType, setVideoType] = useState<'slideshow' | 'heygen'>('heygen');
@@ -174,6 +176,19 @@ export default function CreatePage() {
     setError(null);
     setLoading(true);
     try {
+      // Save edited sections/script before TTS generation
+      if (sectionsDirty || scriptSections.length > 0) {
+        const fullScript = scriptSections.length > 0
+          ? scriptSections.sort((a, b) => a.order - b.order).map(s => s.body).join('\n\n')
+          : script;
+        setScript(fullScript);
+        await apiPatch(`/api/contents/${contentId}`, {
+          script: fullScript,
+          sections: scriptSections.length > 0 ? scriptSections : undefined,
+        });
+        setSectionsDirty(false);
+      }
+
       await apiPost('/api/generate/tts', {
         content_id: contentId,
         tts_provider: ttsProvider,
@@ -203,9 +218,16 @@ export default function CreatePage() {
           setVideoPath(res.data.videoPath);
         }
       } else {
-        // Slideshow (DALL-E + Kling)
+        // Slideshow (DALL-E + Kling) - pass edited sections
         const res = await apiPost<{ videoPath: string }>('/api/generate/video', {
           content_id: contentId,
+          sections: scriptSections.length > 0
+            ? scriptSections.map(s => ({
+                body: s.body,
+                visual_prompt: s.visual_prompt,
+                duration_seconds: s.duration_seconds,
+              }))
+            : undefined,
         });
         if (res.data) {
           setVideoPath(res.data.videoPath);
@@ -374,10 +396,60 @@ export default function CreatePage() {
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Sections with visual descriptions */}
+              {/* Sections - editable */}
               {scriptSections.length > 0 && (
                 <div className="space-y-3">
-                  <label className="text-sm font-medium text-[#111827]">생성된 스크립트 (섹션별)</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-[#111827]">스크립트 (섹션별 편집)</label>
+                    {sectionsDirty && (
+                      <button
+                        type="button"
+                        disabled={sectionsSaving}
+                        onClick={async () => {
+                          if (!contentId) return;
+                          setSectionsSaving(true);
+                          try {
+                            // Rebuild full script from section bodies
+                            const fullScript = scriptSections
+                              .sort((a, b) => a.order - b.order)
+                              .map(s => s.body)
+                              .join('\n\n');
+                            setScript(fullScript);
+
+                            await apiPatch(`/api/contents/${contentId}`, {
+                              script: fullScript,
+                              sections: scriptSections,
+                            });
+                            setSectionsDirty(false);
+                          } catch (err) {
+                            setError(err instanceof Error ? err.message : '저장 실패');
+                          } finally {
+                            setSectionsSaving(false);
+                          }
+                        }}
+                        className={cn(
+                          'inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-all',
+                          sectionsSaving
+                            ? 'bg-gray-100 text-gray-400'
+                            : 'bg-[#1a5c2e] text-white hover:bg-[#144723] shadow-sm'
+                        )}
+                      >
+                        {sectionsSaving ? (
+                          <>
+                            <div className="w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+                            저장 중...
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            변경사항 저장
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
                   {scriptSections
                     .sort((a, b) => a.order - b.order)
                     .map((section, idx) => (
@@ -389,17 +461,50 @@ export default function CreatePage() {
                         <span className="text-xs text-[#6b7280]">{section.duration_seconds}s</span>
                       </div>
                       <div className="p-4 space-y-3">
+                        {/* Narration - editable */}
                         <div>
                           <p className="text-xs font-medium text-[#6b7280] mb-1">나레이션</p>
-                          <p className="text-sm text-[#111827] leading-relaxed">{section.body}</p>
+                          <textarea
+                            value={section.body}
+                            onChange={(e) => {
+                              const updated = [...scriptSections];
+                              updated[idx] = { ...updated[idx], body: e.target.value };
+                              setScriptSections(updated);
+                              setSectionsDirty(true);
+                            }}
+                            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-[#111827] leading-relaxed focus:border-[#1a5c2e] focus:outline-none focus:ring-2 focus:ring-[#1a5c2e]/10 transition-all resize-y min-h-[60px]"
+                          />
                         </div>
+
+                        {/* Visual Prompt - editable */}
+                        <div>
+                          <p className="text-xs font-medium text-amber-600 mb-1 flex items-center gap-1">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            영상 시나리오 (영어 - DALL-E/Kling 프롬프트)
+                          </p>
+                          <textarea
+                            value={section.visual_prompt}
+                            onChange={(e) => {
+                              const updated = [...scriptSections];
+                              updated[idx] = { ...updated[idx], visual_prompt: e.target.value };
+                              setScriptSections(updated);
+                              setSectionsDirty(true);
+                            }}
+                            placeholder="e.g. Cute animated garlic character bouncing..."
+                            className="w-full rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-[#374151] leading-relaxed font-mono focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/10 transition-all resize-y min-h-[50px]"
+                          />
+                        </div>
+
+                        {/* Visual Description - read only */}
                         {section.visual_description && (
                           <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
                             <p className="text-xs font-medium text-blue-600 mb-1 flex items-center gap-1">
                               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                               </svg>
-                              시각 연출
+                              시각 설명 (참고용)
                             </p>
                             <p className="text-xs text-blue-800">{section.visual_description}</p>
                           </div>
@@ -410,14 +515,16 @@ export default function CreatePage() {
                 </div>
               )}
 
-              {/* Full script textarea (editable, for TTS) */}
-              <TextArea
-                id="script"
-                label="전체 나레이션 대본 (편집 가능 - TTS가 읽을 텍스트)"
-                value={script}
-                onChange={(e) => setScript(e.target.value)}
-                className="min-h-[200px] font-mono text-sm"
-              />
+              {/* Full script textarea (hidden if sections exist, shown as fallback) */}
+              {scriptSections.length === 0 && (
+                <TextArea
+                  id="script"
+                  label="전체 나레이션 대본 (편집 가능 - TTS가 읽을 텍스트)"
+                  value={script}
+                  onChange={(e) => setScript(e.target.value)}
+                  className="min-h-[200px] font-mono text-sm"
+                />
+              )}
 
               {/* Premium Options */}
               <div className="border border-gray-200 rounded-xl p-4 space-y-4 bg-gray-50">

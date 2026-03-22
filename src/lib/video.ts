@@ -35,7 +35,7 @@ export interface SectionInput {
 const DEFAULT_WIDTH = 1080;
 const DEFAULT_HEIGHT = 1920;
 const DEFAULT_BG_COLOR = '#1a1a2e';
-const DEFAULT_FONT_SIZE = 42;
+const DEFAULT_FONT_SIZE = 22;
 const MAX_SECTION_IMAGES = 4;
 const MAX_SHORT_FORM_DURATION = 60;
 
@@ -295,10 +295,14 @@ async function generateSlideshowVideo(
   // Track which sections used static image fallback (need -loop 1 -t in ffmpeg)
   const isStaticImage: boolean[] = [];
 
+  console.log(`[Video] Kling API key check: KLING_ACCESS_KEY=${hasKlingKey ? 'SET' : 'MISSING'}, KLING_SECRET_KEY=${process.env.KLING_SECRET_KEY ? 'SET' : 'MISSING'}`);
+
   for (let i = 0; i < limitedSections.length; i++) {
     const imageResult = sectionImageResults[i];
     const clipPath = path.join(clipDir, `${contentId}_clip_${i}.mp4`);
     let clipGenerated = false;
+
+    console.log(`[Video] Section ${i}: imageResult=${imageResult ? 'OK' : 'NULL'}, imageUrl=${imageResult?.imageUrl ? 'YES' : 'NO'}, hasKlingKey=${hasKlingKey}`);
 
     // Try Kling image-to-video if we have an image URL and API keys
     if (hasKlingKey && imageResult?.imageUrl) {
@@ -308,42 +312,60 @@ async function generateSlideshowVideo(
           ? `Smooth cinematic motion, gentle camera movement. ${limitedSections[i].visual_prompt}`
           : `Smooth cinematic motion, gentle camera movement, warm lighting. ${limitedSections[i].body.slice(0, 150).replace(/\n/g, ' ').trim()}`;
 
-        console.log(`[Video] Generating Kling AI video clip ${i + 1}/${limitedSections.length}...`);
+        console.log(`[Video] [Kling] Starting clip ${i + 1}/${limitedSections.length} with prompt: "${klingPrompt.slice(0, 100)}..."`);
+        console.log(`[Video] [Kling] Image URL: ${imageResult.imageUrl.slice(0, 80)}...`);
+        console.log(`[Video] [Kling] Output path: ${clipPath}`);
+
+        const startTime = Date.now();
         await generateKlingVideo({
           prompt: klingPrompt,
           imageUrl: imageResult.imageUrl,
           duration: '5',
           outputPath: clipPath,
         });
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
         if (fs.existsSync(clipPath) && fs.statSync(clipPath).size > 0) {
+          const fileSize = (fs.statSync(clipPath).size / 1024 / 1024).toFixed(2);
           clipPaths.push(clipPath);
           isStaticImage.push(false);
           clipGenerated = true;
-          console.log(`[Video] Kling clip ${i + 1} generated successfully`);
+          console.log(`[Video] [Kling] Clip ${i + 1} generated successfully (${fileSize}MB, ${elapsed}s)`);
+        } else {
+          console.warn(`[Video] [Kling] Clip ${i + 1} file missing or empty after generation (${elapsed}s)`);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[Video] Kling failed for section ${i}, falling back to static image: ${msg}`);
+        const stack = err instanceof Error ? err.stack : '';
+        console.warn(`[Video] [Kling] FAILED for section ${i}: ${msg}`);
+        if (stack) console.warn(`[Video] [Kling] Stack: ${stack}`);
       }
+    } else {
+      const reason = !hasKlingKey ? 'Kling API keys not configured' : 'No image URL available';
+      console.log(`[Video] Skipping Kling for section ${i}: ${reason}`);
     }
 
     // Fallback: use DALL-E static image or solid color
     if (!clipGenerated) {
       if (imageResult?.imagePath && fs.existsSync(imageResult.imagePath)) {
-        console.log(`[Video] Using static image fallback for section ${i}`);
+        console.log(`[Video] FALLBACK: Using static DALL-E image for section ${i} (${imageResult.imagePath})`);
         clipPaths.push(imageResult.imagePath);
         isStaticImage.push(true);
       } else {
         // Generate solid color fallback
         const fallbackPath = path.join(imageDir, `${contentId}_fallback_${i}.png`);
-        console.log(`[Video] Using solid color fallback for section ${i}`);
+        console.log(`[Video] FALLBACK: Using solid color for section ${i} (no image available)`);
         await generateSolidColorImage(backgroundColor, width, height, fallbackPath);
         clipPaths.push(fallbackPath);
         isStaticImage.push(true);
       }
     }
   }
+
+  // Summary log
+  const klingCount = isStaticImage.filter(s => !s).length;
+  const staticCount = isStaticImage.filter(s => s).length;
+  console.log(`[Video] Clip generation complete: ${klingCount} Kling videos, ${staticCount} static image fallbacks`);
 
   // Step 3: Build ffmpeg command to concat clips + audio + subtitles
   const args: string[] = ['-y'];
@@ -384,8 +406,8 @@ async function generateSlideshowVideo(
     const subtitlePathEscaped = subtitlePath
       .replace(/\\/g, '/')
       .replace(/:/g, '\\:');
-    const fontName = process.platform === 'win32' ? 'Malgun Gothic Bold' : 'Noto Sans CJK KR Bold';
-    const subtitleFilter = `[vout]subtitles='${subtitlePathEscaped}':force_style='Fontname=${fontName},Fontsize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=120,Alignment=2'[vsub]`;
+    const fontName = process.platform === 'win32' ? 'Malgun Gothic' : 'Noto Sans CJK KR';
+    const subtitleFilter = `[vout]subtitles='${subtitlePathEscaped}':force_style='Fontname=${fontName},Fontsize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BackColour=&H80000000,BorderStyle=4,Outline=0,Shadow=0,MarginV=40,MarginL=40,MarginR=40,Alignment=2'[vsub]`;
     filterParts.push(subtitleFilter);
     finalVideoLabel = '[vsub]';
   }
@@ -480,8 +502,8 @@ async function generateLegacyVideo(
     const subtitlePathEscaped = subtitlePath
       .replace(/\\/g, '/')
       .replace(/:/g, '\\:');
-    const fontName = process.platform === 'win32' ? 'Malgun Gothic Bold' : 'Noto Sans CJK KR Bold';
-    const subtitleFilter = `subtitles='${subtitlePathEscaped}':force_style='Fontname=${fontName},Fontsize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=120,Alignment=2'`;
+    const fontName = process.platform === 'win32' ? 'Malgun Gothic' : 'Noto Sans CJK KR';
+    const subtitleFilter = `subtitles='${subtitlePathEscaped}':force_style='Fontname=${fontName},Fontsize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BackColour=&H80000000,BorderStyle=4,Outline=0,Shadow=0,MarginV=40,MarginL=40,MarginR=40,Alignment=2'`;
 
     if (backgroundImage && fs.existsSync(backgroundImage)) {
       args.push(

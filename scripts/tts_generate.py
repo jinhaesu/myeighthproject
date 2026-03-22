@@ -11,12 +11,98 @@ import argparse
 import asyncio
 import sys
 import os
+import re
+import subprocess
 
 try:
     import edge_tts
 except ImportError:
     print("ERROR: edge-tts not installed. Run: pip install edge-tts", file=sys.stderr)
     sys.exit(1)
+
+
+def format_time(seconds: float) -> str:
+    """Format seconds as VTT timestamp HH:MM:SS.mmm"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int((seconds % 1) * 1000)
+    return f'{h:02d}:{m:02d}:{s:02d}.{ms:03d}'
+
+
+def get_audio_duration(audio_path: str) -> float:
+    """Get audio duration in seconds using ffprobe."""
+    try:
+        result = subprocess.run(
+            ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+             '-of', 'default=noprint_wrappers=1:nokey=1', audio_path],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
+        pass
+
+    # Fallback: estimate from file size (rough: ~16KB per second for mp3 at 128kbps)
+    try:
+        file_size = os.path.getsize(audio_path)
+        return file_size / 16000.0
+    except OSError:
+        return 30.0  # default fallback
+
+
+def create_sentence_vtt(text: str, total_duration: float, output_path: str) -> None:
+    """Create VTT subtitles by splitting text into sentences with timed cues."""
+    # Split by Korean and English sentence endings
+    sentences = re.split(r'(?<=[.!?。？！\n])\s*', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    if not sentences:
+        sentences = [text]
+
+    # If sentences are too long (>40 chars), split further by commas or clauses
+    split_sentences = []
+    for sentence in sentences:
+        if len(sentence) > 60:
+            # Split by comma, semicolon, or Korean clause markers
+            parts = re.split(r'(?<=[,;，、])\s*|(?<=다)\s+|(?<=요)\s+', sentence)
+            parts = [p.strip() for p in parts if p.strip()]
+            if len(parts) > 1:
+                split_sentences.extend(parts)
+            else:
+                split_sentences.append(sentence)
+        else:
+            split_sentences.append(sentence)
+
+    sentences = split_sentences if split_sentences else [text]
+
+    # Estimate duration per sentence based on character count (proportional)
+    total_chars = sum(len(s) for s in sentences)
+    if total_chars == 0:
+        total_chars = 1
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write('WEBVTT\n\n')
+        current_time = 0.0
+        for i, sentence in enumerate(sentences):
+            # Proportional duration based on character count
+            char_ratio = len(sentence) / total_chars
+            duration = char_ratio * total_duration
+
+            # Ensure minimum 1s and maximum 8s per cue
+            duration = max(1.0, min(8.0, duration))
+
+            start = current_time
+            end = min(current_time + duration, total_duration)
+
+            # Last sentence: extend to total duration
+            if i == len(sentences) - 1:
+                end = total_duration
+
+            f.write(f'{format_time(start)} --> {format_time(end)}\n')
+            f.write(f'{sentence}\n\n')
+
+            current_time = end
 
 
 async def generate_tts(
@@ -33,36 +119,55 @@ async def generate_tts(
 
     communicate = edge_tts.Communicate(text, voice, rate=rate)
 
-    # Generate audio + subtitles using save() method (compatible with all versions)
+    # Generate audio using save() method
     await communicate.save(output_path)
 
-    # Generate VTT subtitle separately
-    # Re-run to get word boundaries for subtitle
+    # Get actual audio duration
+    audio_duration = get_audio_duration(output_path)
+    print(f"[TTS] Audio duration: {audio_duration:.2f}s", file=sys.stderr)
+
+    # Generate VTT subtitle
+    # Try edge-tts SubMaker first for word-level timing
+    vtt_generated = False
     try:
         submaker = edge_tts.SubMaker()
         communicate2 = edge_tts.Communicate(text, voice, rate=rate)
+        word_count = 0
         async for chunk in communicate2.stream():
             if chunk["type"] == "WordBoundary":
                 submaker.feed(chunk)
+                word_count += 1
 
-        # Try different API methods for subtitle generation
-        vtt_content = None
-        for method_name in ["generate_subs", "get_subs", "subs"]:
-            method = getattr(submaker, method_name, None)
-            if method and callable(method):
-                vtt_content = method()
-                break
+        if word_count > 0:
+            # Try different API methods for subtitle generation
+            vtt_content = None
+            for method_name in ["generate_subs", "get_subs", "subs"]:
+                method = getattr(submaker, method_name, None)
+                if method and callable(method):
+                    vtt_content = method()
+                    break
 
-        if vtt_content is None:
-            # Fallback: create basic VTT from text
-            vtt_content = "WEBVTT\n\n00:00:00.000 --> 00:01:00.000\n" + text
+            if vtt_content and len(vtt_content.strip()) > 20:
+                # Validate that VTT has multiple cues (not just one big block)
+                cue_count = vtt_content.count('-->')
+                if cue_count >= 2:
+                    with open(subtitle_path, "w", encoding="utf-8") as sub_file:
+                        sub_file.write(vtt_content)
+                    vtt_generated = True
+                    print(f"[TTS] SubMaker VTT generated with {cue_count} cues", file=sys.stderr)
+                else:
+                    print(f"[TTS] SubMaker produced only {cue_count} cue(s), using sentence-based fallback", file=sys.stderr)
+            else:
+                print("[TTS] SubMaker returned empty/short content, using sentence-based fallback", file=sys.stderr)
+        else:
+            print("[TTS] No WordBoundary events received, using sentence-based fallback", file=sys.stderr)
+    except Exception as e:
+        print(f"[TTS] SubMaker failed ({e}), using sentence-based fallback", file=sys.stderr)
 
-        with open(subtitle_path, "w", encoding="utf-8") as sub_file:
-            sub_file.write(vtt_content)
-    except Exception:
-        # Fallback subtitle
-        with open(subtitle_path, "w", encoding="utf-8") as sub_file:
-            sub_file.write("WEBVTT\n\n00:00:00.000 --> 00:01:00.000\n" + text)
+    # Fallback: create sentence-based VTT
+    if not vtt_generated:
+        print(f"[TTS] Creating sentence-based VTT ({audio_duration:.2f}s total)", file=sys.stderr)
+        create_sentence_vtt(text, audio_duration, subtitle_path)
 
     # Get file sizes
     audio_size = os.path.getsize(output_path)
@@ -73,6 +178,7 @@ async def generate_tts(
         "subtitle_path": subtitle_path,
         "audio_size_bytes": audio_size,
         "subtitle_size_bytes": subtitle_size,
+        "audio_duration_seconds": round(audio_duration, 2),
         "voice": voice,
         "rate": rate,
     }
