@@ -165,27 +165,35 @@ export async function generateKlingVideo(params: KlingVideoParams): Promise<Klin
     const status = statusResult.data?.task_status;
 
     if (status === 'succeed') {
-      // Log full response to debug URL extraction
-      console.log(`[Kling] Task succeeded after ${attempt + 1} polls. Response data:`, JSON.stringify(statusResult.data, null, 2));
+      console.log(`[Kling] Task succeeded after ${attempt + 1} polls`);
 
-      // Try multiple possible response structures
-      const works = statusResult.data?.works;
-      if (works && works.length > 0) {
-        outputUrl = works[0]?.resource?.resource  // documented format
-          || (works[0]?.resource as unknown as { url?: string })?.url  // alternative
-          || (works[0] as unknown as { url?: string })?.url;  // flat format
+      // Deep search for video URL in the response
+      const responseStr = JSON.stringify(statusResult.data);
+      const urlMatch = responseStr.match(/"url"\s*:\s*"(https?:\/\/[^"]+\.mp4[^"]*)"/);
+      if (urlMatch) {
+        outputUrl = urlMatch[1];
+        console.log(`[Kling] Video URL found via regex: ${outputUrl.slice(0, 100)}...`);
+        break;
       }
 
-      // Also check top-level video_url
+      // Try structured paths as fallback
+      const works = statusResult.data?.works;
+      if (works && works.length > 0) {
+        const work = works[0] as Record<string, unknown>;
+        outputUrl = (work?.resource as Record<string, unknown>)?.resource as string
+          || (work?.resource as Record<string, unknown>)?.url as string
+          || work?.url as string;
+      }
+
       if (!outputUrl) {
-        outputUrl = (statusResult.data as unknown as { video_url?: string })?.video_url
-          || (statusResult.data as unknown as { output_url?: string })?.output_url;
+        outputUrl = (statusResult.data as Record<string, unknown>)?.video_url as string
+          || (statusResult.data as Record<string, unknown>)?.output_url as string;
       }
 
       if (outputUrl) {
         console.log(`[Kling] Video URL found: ${outputUrl.slice(0, 100)}...`);
       } else {
-        console.warn(`[Kling] Task succeeded but no video URL found in response`);
+        console.warn(`[Kling] Task succeeded but no video URL found. Full response: ${responseStr.slice(0, 500)}`);
       }
       break;
     }
