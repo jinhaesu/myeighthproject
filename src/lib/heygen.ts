@@ -108,7 +108,10 @@ export async function generateHeyGenVideo(params: HeyGenVideoParams): Promise<He
   };
 
   if (createResult.error) {
-    throw new Error(`HeyGen API error: ${createResult.error}`);
+    const errorMsg = typeof createResult.error === 'string'
+      ? createResult.error
+      : JSON.stringify(createResult.error);
+    throw new Error(`HeyGen API error: ${errorMsg}`);
   }
 
   const videoId = createResult.data?.video_id;
@@ -152,7 +155,8 @@ export async function generateHeyGenVideo(params: HeyGenVideoParams): Promise<He
     };
 
     if (statusResult.error) {
-      console.warn(`[HeyGen] Status check error: ${statusResult.error}`);
+      const errMsg = typeof statusResult.error === 'string' ? statusResult.error : JSON.stringify(statusResult.error);
+      console.warn(`[HeyGen] Status check error: ${errMsg}`);
       continue;
     }
 

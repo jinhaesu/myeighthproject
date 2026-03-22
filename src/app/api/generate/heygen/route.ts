@@ -24,9 +24,9 @@ interface HeyGenRequest {
 // ─── Avatar Style Mapping ───────────────────────────────────────────────────
 
 const AVATAR_STYLE_MAP: Record<string, string> = {
-  professional: 'Angela-inTshirt-20220820',
-  casual: 'Angela-inTshirt-20220820',
-  narrator: 'Angela-inTshirt-20220820',
+  professional: 'Abigail_expressive_2024112501',
+  casual: 'Abigail_expressive_2024112501',
+  narrator: 'Abigail_expressive_2024112501',
 };
 
 // ─── POST /api/generate/heygen ──────────────────────────────────────────────
