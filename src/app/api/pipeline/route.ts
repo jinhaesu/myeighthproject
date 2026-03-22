@@ -6,6 +6,7 @@ import { generatePremiumTTS } from '@/lib/elevenlabs';
 import { generateImage } from '@/lib/image';
 import { generateBGM } from '@/lib/mubert';
 import { generateVideo } from '@/lib/video';
+import { generateHeyGenVideo } from '@/lib/heygen';
 import { generateCaption } from '@/lib/caption';
 import type {
   PipelineRequest,
@@ -16,6 +17,7 @@ import type {
   Platform,
   ScriptSection,
   ApiResponse,
+  VideoType,
 } from '@/types';
 
 // ─── Helper: row types ──────────────────────────────────────────────────────
@@ -346,76 +348,203 @@ export async function POST(request: Request) {
       steps.push({ step: 'bgm', status: 'skipped', data: { reason: skipReason } });
     }
 
-    // ─── Step 6: Generate Video (Slideshow with DALL-E images) ───────────
+    // ─── Step 6: Generate Video ─────────────────────────────────────────
+    // Determine video type: 'heygen' (default/recommended) or 'slideshow'
+    const videoType: VideoType = body.video_type || 'heygen';
+    const useHeyGen = videoType === 'heygen' && !!process.env.HEYGEN_API_KEY;
+
     const step6Start = Date.now();
     try {
       const content = queryOne<ContentRow>('SELECT * FROM contents WHERE id = ?', [contentId]);
-      if (!content?.audio_path) throw new Error('No audio found');
 
-      run(
-        `INSERT INTO generation_logs (content_id, step, status) VALUES (?, 'video', 'started')`,
-        [contentId]
-      );
+      if (useHeyGen) {
+        // ─── HeyGen Avatar Video ──────────────────────────────────────
+        if (!content?.script) throw new Error('No script found');
 
-      // Prepare sections for slideshow
-      let videoSections: Array<{ body: string; duration_seconds: number }> | undefined;
+        const stepName = 'heygen';
+        run(
+          `INSERT INTO generation_logs (content_id, step, status) VALUES (?, ?, 'started')`,
+          [contentId, stepName]
+        );
 
-      if (scriptSections.length > 0) {
-        videoSections = scriptSections.map((s) => ({
-          body: s.body,
-          duration_seconds: s.duration_seconds,
-        }));
+        // Build script text from sections or raw
+        let scriptText = content.script;
+        if (scriptSections.length > 0) {
+          scriptText = scriptSections.map((s) => s.body).join('\n\n');
+        }
+
+        const isProduction = process.env.NODE_ENV === 'production';
+        const outBase = isProduction ? '/tmp' : process.cwd();
+        const videoPath = path.join(outBase, 'output', 'videos', `${contentId}_heygen.mp4`);
+
+        const heygenResult = await generateHeyGenVideo({
+          script: scriptText,
+          language: language,
+          outputPath: videoPath,
+        });
+
+        const step6Duration = Date.now() - step6Start;
+
+        run(
+          `UPDATE contents SET video_path = ?, status = 'video_ready' WHERE id = ?`,
+          [heygenResult.videoPath, contentId]
+        );
+
+        run(
+          `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms)
+           VALUES (?, ?, 'completed', ?, ?)`,
+          [contentId, stepName, JSON.stringify({
+            videoPath: heygenResult.videoPath,
+            videoId: heygenResult.videoId,
+            durationSec: heygenResult.durationSec,
+            videoType: 'heygen',
+          }), step6Duration]
+        );
+
+        steps.push({
+          step: 'video',
+          status: 'success',
+          duration_ms: step6Duration,
+          data: {
+            videoPath: heygenResult.videoPath,
+            videoType: 'heygen',
+            videoId: heygenResult.videoId,
+          },
+        });
+      } else {
+        // ─── Slideshow Video (DALL-E + Runway) ─────────────────────────
+        if (!content?.audio_path) throw new Error('No audio found');
+
+        run(
+          `INSERT INTO generation_logs (content_id, step, status) VALUES (?, 'video', 'started')`,
+          [contentId]
+        );
+
+        // Prepare sections for slideshow
+        let videoSections: Array<{ body: string; duration_seconds: number }> | undefined;
+
+        if (scriptSections.length > 0) {
+          videoSections = scriptSections.map((s) => ({
+            body: s.body,
+            duration_seconds: s.duration_seconds,
+          }));
+        }
+
+        // Generate video with integrated DALL-E slideshow
+        const videoResult = await generateVideo(contentId, content.audio_path, content.subtitle_path, {
+          backgroundImage: content.thumbnail_path || undefined,
+          sections: videoSections,
+          generateImages: true, // Always generate images for slideshow in pipeline
+        });
+        const step6Duration = Date.now() - step6Start;
+
+        run(
+          `UPDATE contents SET video_path = ?, status = 'video_ready' WHERE id = ?`,
+          [videoResult.videoPath, contentId]
+        );
+
+        run(
+          `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms)
+           VALUES (?, 'video', 'completed', ?, ?)`,
+          [contentId, JSON.stringify({
+            videoPath: videoResult.videoPath,
+            videoSizeBytes: videoResult.videoSizeBytes,
+            durationSeconds: videoResult.durationSeconds,
+            slideshowMode: !!videoSections,
+            sectionCount: videoSections?.length ?? 0,
+            videoType: 'slideshow',
+          }), step6Duration]
+        );
+
+        steps.push({
+          step: 'video',
+          status: 'success',
+          duration_ms: step6Duration,
+          data: {
+            videoPath: videoResult.videoPath,
+            videoType: 'slideshow',
+            slideshowMode: !!videoSections,
+            ...(videoResult.durationSeconds > 60 && {
+              durationWarning: `Video duration (${Math.round(videoResult.durationSeconds)}s) exceeds 60s short-form limit`,
+            }),
+          },
+        });
       }
-
-      // Generate video with integrated DALL-E slideshow
-      const videoResult = await generateVideo(contentId, content.audio_path, content.subtitle_path, {
-        backgroundImage: content.thumbnail_path || undefined,
-        sections: videoSections,
-        generateImages: true, // Always generate images for slideshow in pipeline
-      });
-      const step6Duration = Date.now() - step6Start;
-
-      run(
-        `UPDATE contents SET video_path = ?, status = 'video_ready' WHERE id = ?`,
-        [videoResult.videoPath, contentId]
-      );
-
-      run(
-        `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms)
-         VALUES (?, 'video', 'completed', ?, ?)`,
-        [contentId, JSON.stringify({
-          videoPath: videoResult.videoPath,
-          videoSizeBytes: videoResult.videoSizeBytes,
-          durationSeconds: videoResult.durationSeconds,
-          slideshowMode: !!videoSections,
-          sectionCount: videoSections?.length ?? 0,
-        }), step6Duration]
-      );
-
-      steps.push({
-        step: 'video',
-        status: 'success',
-        duration_ms: step6Duration,
-        data: {
-          videoPath: videoResult.videoPath,
-          slideshowMode: !!videoSections,
-          ...(videoResult.durationSeconds > 60 && {
-            durationWarning: `Video duration (${Math.round(videoResult.durationSeconds)}s) exceeds 60s short-form limit`,
-          }),
-        },
-      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      const logStep = useHeyGen ? 'heygen' : 'video';
       run(
-        `INSERT INTO generation_logs (content_id, step, status, error_message, duration_ms) VALUES (?, 'video', 'failed', ?, ?)`,
-        [contentId, msg, Date.now() - step6Start]
+        `INSERT INTO generation_logs (content_id, step, status, error_message, duration_ms) VALUES (?, ?, 'failed', ?, ?)`,
+        [contentId, logStep, msg, Date.now() - step6Start]
       );
       steps.push({ step: 'video', status: 'failed', duration_ms: Date.now() - step6Start, error: msg });
-      return Response.json({
-        success: false,
-        error: `Video generation failed: ${msg}`,
-        data: { content_id: contentId, steps, publish_job_ids: [], total_duration_ms: Date.now() - pipelineStart },
-      } satisfies ApiResponse, { status: 500 });
+
+      // If HeyGen fails, try fallback to slideshow
+      if (useHeyGen) {
+        console.warn(`[Pipeline] HeyGen failed, falling back to slideshow: ${msg}`);
+        const fallbackStart = Date.now();
+        try {
+          const content = queryOne<ContentRow>('SELECT * FROM contents WHERE id = ?', [contentId]);
+          if (content?.audio_path) {
+            run(
+              `INSERT INTO generation_logs (content_id, step, status) VALUES (?, 'video', 'started')`,
+              [contentId]
+            );
+
+            let videoSections: Array<{ body: string; duration_seconds: number }> | undefined;
+            if (scriptSections.length > 0) {
+              videoSections = scriptSections.map((s) => ({
+                body: s.body,
+                duration_seconds: s.duration_seconds,
+              }));
+            }
+
+            const videoResult = await generateVideo(contentId, content.audio_path, content.subtitle_path, {
+              backgroundImage: content.thumbnail_path || undefined,
+              sections: videoSections,
+              generateImages: true,
+            });
+            const fallbackDuration = Date.now() - fallbackStart;
+
+            run(
+              `UPDATE contents SET video_path = ?, status = 'video_ready' WHERE id = ?`,
+              [videoResult.videoPath, contentId]
+            );
+
+            run(
+              `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms)
+               VALUES (?, 'video', 'completed', ?, ?)`,
+              [contentId, JSON.stringify({
+                videoPath: videoResult.videoPath,
+                videoType: 'slideshow',
+                fallbackFromHeyGen: true,
+              }), fallbackDuration]
+            );
+
+            // Replace the failed step with success
+            steps[steps.length - 1] = {
+              step: 'video',
+              status: 'success',
+              duration_ms: fallbackDuration,
+              data: { videoPath: videoResult.videoPath, videoType: 'slideshow', fallbackFromHeyGen: true },
+            };
+          }
+        } catch (fallbackErr) {
+          const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+          console.error(`[Pipeline] Slideshow fallback also failed: ${fallbackMsg}`);
+          return Response.json({
+            success: false,
+            error: `Video generation failed (HeyGen + slideshow fallback): ${msg} | ${fallbackMsg}`,
+            data: { content_id: contentId, steps, publish_job_ids: [], total_duration_ms: Date.now() - pipelineStart },
+          } satisfies ApiResponse, { status: 500 });
+        }
+      } else {
+        return Response.json({
+          success: false,
+          error: `Video generation failed: ${msg}`,
+          data: { content_id: contentId, steps, publish_job_ids: [], total_duration_ms: Date.now() - pipelineStart },
+        } satisfies ApiResponse, { status: 500 });
+      }
     }
 
     // ─── Step 7: Caption & Hashtag Generation ────────────────────────────

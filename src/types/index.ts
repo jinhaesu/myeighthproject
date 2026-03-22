@@ -47,7 +47,7 @@ export interface CalendarEvent {
 export interface GenerationLog {
   id: number;
   content_id: number;
-  step: 'script' | 'tts' | 'video' | 'caption' | 'pipeline' | 'image' | 'bgm' | 'ai_video';
+  step: 'script' | 'tts' | 'video' | 'caption' | 'pipeline' | 'image' | 'bgm' | 'ai_video' | 'heygen';
   status: 'started' | 'completed' | 'failed';
   input_params: Record<string, unknown> | null;
   output_result: Record<string, unknown> | null;
@@ -166,6 +166,8 @@ export interface CreateCalendarEventRequest {
 
 // ─── Pipeline Request Types ──────────────────────────────────────────────────
 
+export type VideoType = 'slideshow' | 'heygen';
+
 export interface PipelineRequest {
   content_type: ContentType;
   topic: string;
@@ -177,6 +179,7 @@ export interface PipelineRequest {
   tts_provider?: 'elevenlabs' | 'edge-tts';
   generate_image?: boolean;      // Auto-generate thumbnail with DALL-E
   generate_bgm?: boolean;        // Auto-generate BGM with Mubert
+  video_type?: VideoType;        // 'slideshow' (DALL-E + Runway) or 'heygen' (AI avatar)
 }
 
 export interface BulkPipelineRequest {

@@ -59,6 +59,7 @@ export default function CreatePage() {
   const [bgmGenerating, setBgmGenerating] = useState(false);
 
   // Step 3 state
+  const [videoType, setVideoType] = useState<'slideshow' | 'heygen'>('heygen');
   const [videoPath, setVideoPath] = useState<string | null>(null);
 
   // Step 4 state
@@ -145,11 +146,23 @@ export default function CreatePage() {
     setError(null);
     setLoading(true);
     try {
-      const res = await apiPost<{ videoPath: string }>('/api/generate/video', {
-        content_id: contentId,
-      });
-      if (res.data) {
-        setVideoPath(res.data.videoPath);
+      if (videoType === 'heygen') {
+        // HeyGen AI avatar video
+        const res = await apiPost<{ videoPath: string }>('/api/generate/heygen', {
+          content_id: contentId,
+          avatar_style: 'professional',
+        });
+        if (res.data) {
+          setVideoPath(res.data.videoPath);
+        }
+      } else {
+        // Slideshow (DALL-E + Runway)
+        const res = await apiPost<{ videoPath: string }>('/api/generate/video', {
+          content_id: contentId,
+        });
+        if (res.data) {
+          setVideoPath(res.data.videoPath);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '영상 생성 실패');
@@ -463,36 +476,116 @@ export default function CreatePage() {
         <Card className="space-y-6 animate-fade-in">
           <div>
             <h2 className="text-lg font-semibold text-[#111827]">영상 생성</h2>
-            <p className="text-sm text-[#6b7280] mt-1">스크립트와 음성을 결합하여 영상을 제작합니다</p>
+            <p className="text-sm text-[#6b7280] mt-1">영상 타입을 선택하고 생성합니다</p>
           </div>
 
           {!videoPath ? (
-            <div className="text-center py-12 space-y-5">
-              <div className="w-16 h-16 bg-gradient-to-br from-[#e8f5e9] to-[#c8e6c9] rounded-2xl flex items-center justify-center mx-auto">
-                <svg className="w-8 h-8 text-[#1a5c2e]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-[#111827] font-medium mb-1">영상을 생성할 준비가 되었습니다</p>
-                <p className="text-sm text-[#6b7280]">스크립트와 음성을 결합하여 영상을 생성합니다</p>
-              </div>
-              <Button onClick={handleGenerateVideo} disabled={loading} size="lg">
-                {loading ? (
-                  <div className="flex items-center gap-3">
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>AI가 영상을 생성하고 있습니다... (섹션당 약 30초 소요)</span>
+            <div className="space-y-6">
+              {/* Video Type Selection */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label
+                  className={cn(
+                    'relative flex flex-col rounded-xl border-2 p-4 cursor-pointer transition-all duration-200',
+                    videoType === 'heygen'
+                      ? 'border-[#1a5c2e] bg-green-50 shadow-md'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="video-type"
+                    value="heygen"
+                    checked={videoType === 'heygen'}
+                    onChange={() => setVideoType('heygen')}
+                    className="sr-only"
+                  />
+                  {videoType === 'heygen' && (
+                    <span className="absolute top-2 right-2 bg-[#1a5c2e] text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      추천
+                    </span>
+                  )}
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={cn(
+                      'w-10 h-10 rounded-lg flex items-center justify-center',
+                      videoType === 'heygen' ? 'bg-[#1a5c2e]/10' : 'bg-gray-100'
+                    )}>
+                      <svg className={cn('w-5 h-5', videoType === 'heygen' ? 'text-[#1a5c2e]' : 'text-gray-400')} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                    <span className={cn(
+                      'font-semibold',
+                      videoType === 'heygen' ? 'text-[#1a5c2e]' : 'text-[#111827]'
+                    )}>
+                      AI 아바타 (HeyGen)
+                    </span>
                   </div>
-                ) : (
-                  <>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    AI 영상 생성 (Runway + DALL-E)
-                  </>
-                )}
-              </Button>
+                  <p className="text-xs text-[#6b7280]">
+                    AI 전문가가 스크립트를 직접 읽는 영상을 생성합니다
+                  </p>
+                </label>
+
+                <label
+                  className={cn(
+                    'relative flex flex-col rounded-xl border-2 p-4 cursor-pointer transition-all duration-200',
+                    videoType === 'slideshow'
+                      ? 'border-[#1a5c2e] bg-green-50 shadow-md'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="video-type"
+                    value="slideshow"
+                    checked={videoType === 'slideshow'}
+                    onChange={() => setVideoType('slideshow')}
+                    className="sr-only"
+                  />
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={cn(
+                      'w-10 h-10 rounded-lg flex items-center justify-center',
+                      videoType === 'slideshow' ? 'bg-[#1a5c2e]/10' : 'bg-gray-100'
+                    )}>
+                      <svg className={cn('w-5 h-5', videoType === 'slideshow' ? 'text-[#1a5c2e]' : 'text-gray-400')} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <span className={cn(
+                      'font-semibold',
+                      videoType === 'slideshow' ? 'text-[#1a5c2e]' : 'text-[#111827]'
+                    )}>
+                      AI 영상 (Runway + DALL-E)
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#6b7280]">
+                    섹션별 AI 영상 클립을 생성하여 슬라이드쇼로 합성합니다
+                  </p>
+                </label>
+              </div>
+
+              {/* Generate Button */}
+              <div className="text-center pt-2">
+                <Button onClick={handleGenerateVideo} disabled={loading} size="lg">
+                  {loading ? (
+                    <div className="flex items-center gap-3">
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>
+                        {videoType === 'heygen'
+                          ? 'AI 아바타가 영상을 생성하고 있습니다... (약 2~3분 소요)'
+                          : 'AI가 영상을 생성하고 있습니다... (섹션당 약 30초 소요)'}
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      {videoType === 'heygen' ? 'AI 아바타 영상 생성 (HeyGen)' : 'AI 영상 생성 (Runway + DALL-E)'}
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="space-y-6 animate-fade-in">

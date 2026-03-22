@@ -16,6 +16,7 @@ import type {
   PipelineResult,
   PipelineStepResult,
   PlanItem,
+  VideoType,
 } from '@/types';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -45,6 +46,7 @@ const STEP_LABELS: Record<string, string> = {
   tts: 'TTS 음성 생성',
   bgm: 'BGM 생성 (설정 필요)',
   video: '영상 합성',
+  heygen: 'AI 아바타 영상 (HeyGen)',
   caption: '캡션/해시태그 생성',
   publish_schedule: '배포 예약',
 };
@@ -122,6 +124,7 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
   const [scheduledAt, setScheduledAt] = useState('');
   const [autoCaption, setAutoCaption] = useState(true);
   const [premiumMode, setPremiumMode] = useState(false);
+  const [videoType, setVideoType] = useState<VideoType>('heygen');
 
   const [running, setRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState<string | null>(null);
@@ -169,6 +172,7 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
         scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
         auto_caption: autoCaption,
         premium_mode: premiumMode,
+        video_type: videoType,
       });
 
       clearInterval(stepTimer);
@@ -192,6 +196,7 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
     setCurrentStep(null);
     setError(null);
     setTopic('');
+    setVideoType('heygen');
   }
 
   return (
@@ -397,6 +402,70 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
                   className="accent-[#1a5c2e]"
                 />
                 <span className="text-sm text-[#1a1a2e]">AI 캡션 자동 생성</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Video Type Selection */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-[#1a1a2e]">영상 타입</span>
+            <div className="grid grid-cols-2 gap-2">
+              <label
+                className={cn(
+                  'flex items-center gap-2 rounded-lg border px-3 py-2.5 cursor-pointer transition-all',
+                  videoType === 'heygen'
+                    ? 'border-[#1a5c2e] bg-[#e8f5e9] shadow-sm'
+                    : 'border-gray-200 hover:border-gray-300',
+                  running && 'opacity-50 cursor-not-allowed'
+                )}
+              >
+                <input
+                  type="radio"
+                  name="video-type"
+                  value="heygen"
+                  checked={videoType === 'heygen'}
+                  onChange={() => setVideoType('heygen')}
+                  disabled={running}
+                  className="accent-[#1a5c2e]"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <svg className="w-4 h-4 text-[#1a5c2e]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    <span className="text-sm font-medium text-[#1a1a2e]">AI 아바타 (HeyGen)</span>
+                    <span className="text-[10px] font-bold bg-[#1a5c2e] text-white px-1.5 py-0.5 rounded-full">추천</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">AI 전문가가 스크립트를 읽는 영상</p>
+                </div>
+              </label>
+              <label
+                className={cn(
+                  'flex items-center gap-2 rounded-lg border px-3 py-2.5 cursor-pointer transition-all',
+                  videoType === 'slideshow'
+                    ? 'border-[#1a5c2e] bg-[#e8f5e9] shadow-sm'
+                    : 'border-gray-200 hover:border-gray-300',
+                  running && 'opacity-50 cursor-not-allowed'
+                )}
+              >
+                <input
+                  type="radio"
+                  name="video-type"
+                  value="slideshow"
+                  checked={videoType === 'slideshow'}
+                  onChange={() => setVideoType('slideshow')}
+                  disabled={running}
+                  className="accent-[#1a5c2e]"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <span className="text-sm font-medium text-[#1a1a2e]">AI 영상 (Runway + DALL-E)</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">섹션별 AI 영상 클립 생성</p>
+                </div>
               </label>
             </div>
           </div>
