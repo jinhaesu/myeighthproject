@@ -10,13 +10,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
     Resend({
       apiKey: process.env.AUTH_RESEND_KEY,
-      from: process.env.AUTH_EMAIL_FROM ?? 'Nuldam <noreply@nuldam.com>',
+      // Resend 무료 플랜은 onboarding@resend.dev만 사용 가능
+      // 자체 도메인 사용 시 Resend 대시보드에서 도메인 인증 필요
+      from: process.env.AUTH_EMAIL_FROM ?? 'onboarding@resend.dev',
     }),
   ],
   session: { strategy: 'jwt' },
   pages: {
     signIn: '/login',
     verifyRequest: '/login?verify=1',
+    error: '/login?error=1',
   },
   callbacks: {
     async signIn({ user }) {
