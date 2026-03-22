@@ -34,7 +34,7 @@ export async function sendVerificationCode(
   codes.set(normalised, { code, expires: Date.now() + 10 * 60 * 1000 });
 
   await getResend().emails.send({
-    from: process.env.AUTH_EMAIL_FROM ?? 'onboarding@resend.dev',
+    from: process.env.AUTH_EMAIL_FROM ?? 'noreply@joinandjoin.com',
     to: normalised,
     subject: 'Nuldam Content Studio - Login Code',
     html: `<p>Your login code: <strong>${code}</strong></p><p>Valid for 10 minutes.</p>`,
