@@ -180,7 +180,7 @@ export default function ContentsPage() {
               {filteredContents.map((content) => (
                 <tr
                   key={content.id}
-                  onClick={() => router.push('/contents')}
+                  onClick={() => router.push(`/contents/${content.id}`)}
                   className="border-b border-gray-50 last:border-b-0 hover:bg-gray-50/50 transition-colors cursor-pointer"
                 >
                   <td className="px-6 py-4 text-sm font-medium text-[#111827]">

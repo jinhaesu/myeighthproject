@@ -26,11 +26,15 @@ let _cachedPat: string | null = null;
 async function getPat(): Promise<string> {
   if (_cachedPat) return _cachedPat;
 
-  const email = process.env.MUBERT_API_ID; // email used for registration
+  const email = process.env.MUBERT_EMAIL;
   const token = process.env.MUBERT_API_TOKEN;
 
   if (!email || !token) {
-    throw new Error('MUBERT_API_ID (email) and MUBERT_API_TOKEN are required');
+    throw new Error(
+      'MUBERT_EMAIL과 MUBERT_API_TOKEN 환경변수를 설정해주세요. ' +
+      'MUBERT_EMAIL은 Mubert 가입 시 사용한 이메일입니다. ' +
+      '(MUBERT_API_ID는 UUID이므로 email 파라미터에 사용할 수 없습니다)'
+    );
   }
 
   const response = await fetch(`${MUBERT_API_BASE}/GetServiceAccess`, {

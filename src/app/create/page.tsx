@@ -7,7 +7,7 @@ import Button from '@/components/ui/Button';
 import Select from '@/components/ui/Select';
 import TextArea from '@/components/ui/TextArea';
 import ProgressBar from '@/components/ui/ProgressBar';
-import { apiGet, apiPost } from '@/lib/api';
+import { apiGet, apiPost, getFileUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { Content, ContentType, Language, PlatformAccount, Platform } from '@/types';
 
@@ -532,7 +532,7 @@ export default function CreatePage() {
               {/* Video preview */}
               <div className="bg-black rounded-2xl overflow-hidden aspect-video flex items-center justify-center">
                 <video
-                  src={videoPath}
+                  src={getFileUrl(videoPath)}
                   controls
                   className="w-full h-full"
                 >
@@ -544,7 +544,7 @@ export default function CreatePage() {
               {/* Actions */}
               <div className="flex items-center gap-3">
                 <a
-                  href={videoPath}
+                  href={getFileUrl(videoPath)}
                   download
                   className="inline-flex items-center gap-2 text-sm font-medium text-[#1a5c2e] hover:text-[#144723] transition-colors"
                 >

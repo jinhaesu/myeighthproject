@@ -65,3 +65,20 @@ export async function apiPatch<T>(
 export async function apiDelete<T>(url: string): Promise<ApiResponse<T>> {
   return request<T>(url, { method: 'DELETE' });
 }
+
+/**
+ * Convert a server-side file path to a URL that can be used in the browser.
+ * e.g. /tmp/output/videos/1.mp4 → /api/files/videos/1.mp4
+ * e.g. C:\...\output\videos\1.mp4 → /api/files/videos/1.mp4
+ */
+export function getFileUrl(filePath: string): string {
+  const match = filePath.match(/output[/\\](.+)$/);
+  if (match) {
+    const relativePath = match[1].replace(/\\/g, '/');
+    if (typeof window !== 'undefined' && process.env.NODE_ENV === 'production') {
+      return `${RAILWAY_URL}/api/files/${relativePath}`;
+    }
+    return `/api/files/${relativePath}`;
+  }
+  return filePath;
+}
