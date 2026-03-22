@@ -41,13 +41,15 @@ const platformMeta: Record<Platform, { label: string; color: string; icon: strin
 const STEP_LABELS: Record<string, string> = {
   content_create: '콘텐츠 생성',
   script: '스크립트 생성 (AI)',
+  image: '이미지 생성 (DALL-E 3)',
   tts: 'TTS 음성 생성',
+  bgm: 'BGM 생성 (Mubert)',
   video: '영상 합성',
   caption: '캡션/해시태그 생성',
   publish_schedule: '배포 예약',
 };
 
-const STEP_ORDER = ['content_create', 'script', 'tts', 'video', 'caption', 'publish_schedule'];
+const STEP_ORDER = ['content_create', 'script', 'image', 'tts', 'bgm', 'video', 'caption', 'publish_schedule'];
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -119,6 +121,7 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
   const [selectedAccounts, setSelectedAccounts] = useState<number[]>([]);
   const [scheduledAt, setScheduledAt] = useState('');
   const [autoCaption, setAutoCaption] = useState(true);
+  const [premiumMode, setPremiumMode] = useState(false);
 
   const [running, setRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState<string | null>(null);
@@ -165,6 +168,7 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
         platforms: selectedAccounts,
         scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
         auto_caption: autoCaption,
+        premium_mode: premiumMode,
       });
 
       clearInterval(stepTimer);
@@ -395,6 +399,76 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
                 <span className="text-sm text-[#1a1a2e]">AI 캡션 자동 생성</span>
               </label>
             </div>
+          </div>
+
+          {/* Premium Mode Toggle */}
+          <div className={cn(
+            'rounded-xl border p-4 transition-all',
+            premiumMode
+              ? 'border-amber-300 bg-gradient-to-r from-amber-50 to-yellow-50'
+              : 'border-gray-200 bg-gray-50'
+          )}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  'w-10 h-10 rounded-lg flex items-center justify-center',
+                  premiumMode ? 'bg-amber-100' : 'bg-gray-200'
+                )}>
+                  <svg className={cn('w-5 h-5', premiumMode ? 'text-amber-600' : 'text-gray-400')} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                  </svg>
+                </div>
+                <div>
+                  <span className={cn(
+                    'text-sm font-semibold',
+                    premiumMode ? 'text-amber-800' : 'text-gray-600'
+                  )}>
+                    프리미엄 모드
+                  </span>
+                  <p className={cn(
+                    'text-xs mt-0.5',
+                    premiumMode ? 'text-amber-600' : 'text-gray-400'
+                  )}>
+                    ElevenLabs TTS + DALL-E 3 이미지 + Mubert BGM
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={premiumMode}
+                onClick={() => setPremiumMode(!premiumMode)}
+                disabled={running}
+                className={cn(
+                  'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2',
+                  premiumMode ? 'bg-amber-500 focus:ring-amber-500' : 'bg-gray-300 focus:ring-gray-400',
+                  running && 'opacity-50 cursor-not-allowed'
+                )}
+              >
+                <span
+                  className={cn(
+                    'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                    premiumMode ? 'translate-x-5' : 'translate-x-0'
+                  )}
+                />
+              </button>
+            </div>
+            {premiumMode && (
+              <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                <div className="bg-white/80 rounded-lg px-2 py-1.5 text-center">
+                  <span className="font-medium text-amber-700">ElevenLabs</span>
+                  <p className="text-amber-500">프리미엄 TTS</p>
+                </div>
+                <div className="bg-white/80 rounded-lg px-2 py-1.5 text-center">
+                  <span className="font-medium text-amber-700">DALL-E 3</span>
+                  <p className="text-amber-500">AI 이미지</p>
+                </div>
+                <div className="bg-white/80 rounded-lg px-2 py-1.5 text-center">
+                  <span className="font-medium text-amber-700">Mubert</span>
+                  <p className="text-amber-500">AI BGM</p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Progress */}

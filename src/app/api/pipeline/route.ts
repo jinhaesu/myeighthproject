@@ -1,6 +1,10 @@
+import path from 'path';
 import { queryOne, run } from '@/lib/db';
 import { generateScript } from '@/lib/claude';
 import { generateTTS } from '@/lib/tts';
+import { generatePremiumTTS } from '@/lib/elevenlabs';
+import { generateImage } from '@/lib/image';
+import { generateBGM } from '@/lib/mubert';
 import { generateVideo } from '@/lib/video';
 import { generateCaption } from '@/lib/caption';
 import type {
@@ -24,6 +28,7 @@ interface ContentRow {
   audio_path: string | null;
   subtitle_path: string | null;
   video_path: string | null;
+  thumbnail_path: string | null;
 }
 
 interface PlatformAccountRow {
@@ -58,6 +63,12 @@ export async function POST(request: Request) {
     const language: Language = body.language || 'ko';
     const steps: PipelineStepResult[] = [];
     const publishJobIds: number[] = [];
+
+    // Premium mode flags
+    const premiumMode = body.premium_mode === true;
+    const usePremiumTTS = premiumMode || body.tts_provider === 'elevenlabs';
+    const generateImg = premiumMode || body.generate_image === true;
+    const generateBgm = premiumMode || body.generate_bgm === true;
 
     // ─── Step 1: Create Content ──────────────────────────────────────────
     const step1Start = Date.now();
@@ -136,8 +147,59 @@ export async function POST(request: Request) {
       } satisfies ApiResponse, { status: 500 });
     }
 
-    // ─── Step 3: Generate TTS ────────────────────────────────────────────
-    const step3Start = Date.now();
+    // ─── Step 3: Generate Image (DALL-E 3) - NEW ─────────────────────────
+    if (generateImg) {
+      const step3Start = Date.now();
+      try {
+        run(
+          `INSERT INTO generation_logs (content_id, step, status) VALUES (?, 'image', 'started')`,
+          [contentId]
+        );
+
+        const projectRoot = process.cwd();
+        const imagePath = path.join(projectRoot, 'output', 'images', `${contentId}.png`);
+
+        const imageResult = await generateImage({
+          prompt: `Korean health food brand "Nuldam" thumbnail for: ${body.topic}. Clean, modern, professional food photography style. High quality, appetizing, warm lighting, 9:16 aspect ratio suitable for short-form video.`,
+          style: 'vivid',
+          size: '1024x1792',
+          outputPath: imagePath,
+        });
+
+        const step3Duration = Date.now() - step3Start;
+
+        run(
+          `UPDATE contents SET thumbnail_path = ? WHERE id = ?`,
+          [imageResult.imagePath, contentId]
+        );
+
+        run(
+          `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms)
+           VALUES (?, 'image', 'completed', ?, ?)`,
+          [contentId, JSON.stringify({ imagePath: imageResult.imagePath }), step3Duration]
+        );
+
+        steps.push({
+          step: 'image',
+          status: 'success',
+          duration_ms: step3Duration,
+          data: { imagePath: imageResult.imagePath, revisedPrompt: imageResult.revisedPrompt },
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        run(
+          `INSERT INTO generation_logs (content_id, step, status, error_message, duration_ms) VALUES (?, 'image', 'failed', ?, ?)`,
+          [contentId, msg, Date.now() - step3Start]
+        );
+        // Image failure is non-fatal, continue pipeline
+        steps.push({ step: 'image', status: 'failed', duration_ms: Date.now() - step3Start, error: msg });
+      }
+    } else {
+      steps.push({ step: 'image', status: 'skipped' });
+    }
+
+    // ─── Step 4: Generate TTS (ElevenLabs or edge-tts) - UPGRADED ────────
+    const step4Start = Date.now();
     try {
       const content = queryOne<ContentRow>('SELECT * FROM contents WHERE id = ?', [contentId]);
       if (!content?.script) throw new Error('No script found after generation');
@@ -147,33 +209,67 @@ export async function POST(request: Request) {
         [contentId]
       );
 
-      const ttsResult = await generateTTS(content.script, contentId);
-      const step3Duration = Date.now() - step3Start;
+      let audioPath: string;
+      let subtitlePath: string;
+
+      if (usePremiumTTS) {
+        // Try ElevenLabs first
+        try {
+          const projectRoot = process.cwd();
+          const premiumAudioPath = path.join(projectRoot, 'output', 'audio', `${contentId}.mp3`);
+
+          const premiumResult = await generatePremiumTTS({
+            text: content.script,
+            outputPath: premiumAudioPath,
+          });
+
+          audioPath = premiumResult.audioPath;
+          // ElevenLabs doesn't produce subtitles, generate empty VTT
+          subtitlePath = path.join(projectRoot, 'output', 'subtitles', `${contentId}.vtt`);
+          const { writeFileSync, mkdirSync, existsSync } = await import('fs');
+          const subtitleDir = path.dirname(subtitlePath);
+          if (!existsSync(subtitleDir)) mkdirSync(subtitleDir, { recursive: true });
+          writeFileSync(subtitlePath, 'WEBVTT\n\n');
+        } catch (elevenLabsErr) {
+          // Fallback to edge-tts
+          console.warn('[Pipeline] ElevenLabs failed, falling back to edge-tts:', elevenLabsErr);
+          const ttsResult = await generateTTS(content.script, contentId);
+          audioPath = ttsResult.audioPath;
+          subtitlePath = ttsResult.subtitlePath;
+        }
+      } else {
+        // Use edge-tts
+        const ttsResult = await generateTTS(content.script, contentId);
+        audioPath = ttsResult.audioPath;
+        subtitlePath = ttsResult.subtitlePath;
+      }
+
+      const step4Duration = Date.now() - step4Start;
 
       run(
         `UPDATE contents SET audio_path = ?, subtitle_path = ?, status = 'audio_ready' WHERE id = ?`,
-        [ttsResult.audioPath, ttsResult.subtitlePath, contentId]
+        [audioPath, subtitlePath, contentId]
       );
 
       run(
         `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms)
          VALUES (?, 'tts', 'completed', ?, ?)`,
-        [contentId, JSON.stringify({ audioPath: ttsResult.audioPath, voice: ttsResult.voice }), step3Duration]
+        [contentId, JSON.stringify({ audioPath, provider: usePremiumTTS ? 'elevenlabs' : 'edge-tts' }), step4Duration]
       );
 
       steps.push({
         step: 'tts',
         status: 'success',
-        duration_ms: step3Duration,
-        data: { audioPath: ttsResult.audioPath },
+        duration_ms: step4Duration,
+        data: { audioPath, provider: usePremiumTTS ? 'elevenlabs' : 'edge-tts' },
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       run(
         `INSERT INTO generation_logs (content_id, step, status, error_message, duration_ms) VALUES (?, 'tts', 'failed', ?, ?)`,
-        [contentId, msg, Date.now() - step3Start]
+        [contentId, msg, Date.now() - step4Start]
       );
-      steps.push({ step: 'tts', status: 'failed', duration_ms: Date.now() - step3Start, error: msg });
+      steps.push({ step: 'tts', status: 'failed', duration_ms: Date.now() - step4Start, error: msg });
       return Response.json({
         success: false,
         error: `TTS generation failed: ${msg}`,
@@ -181,8 +277,55 @@ export async function POST(request: Request) {
       } satisfies ApiResponse, { status: 500 });
     }
 
-    // ─── Step 4: Generate Video ──────────────────────────────────────────
-    const step4Start = Date.now();
+    // ─── Step 5: Generate BGM (Mubert) - NEW ─────────────────────────────
+    let bgmPath: string | null = null;
+    if (generateBgm) {
+      const step5Start = Date.now();
+      try {
+        run(
+          `INSERT INTO generation_logs (content_id, step, status) VALUES (?, 'bgm', 'started')`,
+          [contentId]
+        );
+
+        const projectRoot = process.cwd();
+        const bgmOutputPath = path.join(projectRoot, 'output', 'music', `${contentId}.mp3`);
+
+        const bgmResult = await generateBGM({
+          prompt: `calm healthy food cooking background music for Korean health brand, gentle, warm, positive`,
+          duration: 60,
+          outputPath: bgmOutputPath,
+        });
+
+        bgmPath = bgmResult.bgmPath;
+        const step5Duration = Date.now() - step5Start;
+
+        run(
+          `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms)
+           VALUES (?, 'bgm', 'completed', ?, ?)`,
+          [contentId, JSON.stringify({ bgmPath: bgmResult.bgmPath, durationSec: bgmResult.durationSec }), step5Duration]
+        );
+
+        steps.push({
+          step: 'bgm',
+          status: 'success',
+          duration_ms: step5Duration,
+          data: { bgmPath: bgmResult.bgmPath },
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        run(
+          `INSERT INTO generation_logs (content_id, step, status, error_message, duration_ms) VALUES (?, 'bgm', 'failed', ?, ?)`,
+          [contentId, msg, Date.now() - step5Start]
+        );
+        // BGM failure is non-fatal, continue pipeline
+        steps.push({ step: 'bgm', status: 'failed', duration_ms: Date.now() - step5Start, error: msg });
+      }
+    } else {
+      steps.push({ step: 'bgm', status: 'skipped' });
+    }
+
+    // ─── Step 6: Generate Video (Image BG + TTS + BGM + Subtitles) - UPGRADED
+    const step6Start = Date.now();
     try {
       const content = queryOne<ContentRow>('SELECT * FROM contents WHERE id = ?', [contentId]);
       if (!content?.audio_path || !content?.subtitle_path) throw new Error('No audio/subtitle found');
@@ -192,8 +335,11 @@ export async function POST(request: Request) {
         [contentId]
       );
 
-      const videoResult = await generateVideo(contentId, content.audio_path, content.subtitle_path);
-      const step4Duration = Date.now() - step4Start;
+      // Use generated image as background if available
+      const videoResult = await generateVideo(contentId, content.audio_path, content.subtitle_path, {
+        backgroundImage: content.thumbnail_path || undefined,
+      });
+      const step6Duration = Date.now() - step6Start;
 
       run(
         `UPDATE contents SET video_path = ?, status = 'video_ready' WHERE id = ?`,
@@ -203,22 +349,22 @@ export async function POST(request: Request) {
       run(
         `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms)
          VALUES (?, 'video', 'completed', ?, ?)`,
-        [contentId, JSON.stringify({ videoPath: videoResult.videoPath, videoSizeBytes: videoResult.videoSizeBytes }), step4Duration]
+        [contentId, JSON.stringify({ videoPath: videoResult.videoPath, videoSizeBytes: videoResult.videoSizeBytes }), step6Duration]
       );
 
       steps.push({
         step: 'video',
         status: 'success',
-        duration_ms: step4Duration,
+        duration_ms: step6Duration,
         data: { videoPath: videoResult.videoPath },
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       run(
         `INSERT INTO generation_logs (content_id, step, status, error_message, duration_ms) VALUES (?, 'video', 'failed', ?, ?)`,
-        [contentId, msg, Date.now() - step4Start]
+        [contentId, msg, Date.now() - step6Start]
       );
-      steps.push({ step: 'video', status: 'failed', duration_ms: Date.now() - step4Start, error: msg });
+      steps.push({ step: 'video', status: 'failed', duration_ms: Date.now() - step6Start, error: msg });
       return Response.json({
         success: false,
         error: `Video generation failed: ${msg}`,
@@ -226,12 +372,12 @@ export async function POST(request: Request) {
       } satisfies ApiResponse, { status: 500 });
     }
 
-    // ─── Step 5: Caption & Hashtag Generation ────────────────────────────
+    // ─── Step 7: Caption & Hashtag Generation ────────────────────────────
     let captionText: string | null = null;
     let hashtags: string[] = [];
 
     if (body.auto_caption !== false && body.platforms && body.platforms.length > 0) {
-      const step5Start = Date.now();
+      const step7Start = Date.now();
       try {
         const content = queryOne<ContentRow>('SELECT * FROM contents WHERE id = ?', [contentId]);
         if (!content?.script) throw new Error('No script found for caption generation');
@@ -249,7 +395,7 @@ export async function POST(request: Request) {
         );
 
         const captionResult = await generateCaption(content.script, platformType, language);
-        const step5Duration = Date.now() - step5Start;
+        const step7Duration = Date.now() - step7Start;
 
         captionText = captionResult.caption;
         hashtags = captionResult.hashtags;
@@ -257,31 +403,31 @@ export async function POST(request: Request) {
         run(
           `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms)
            VALUES (?, 'caption', 'completed', ?, ?)`,
-          [contentId, JSON.stringify({ captionLength: captionText.length, hashtagCount: hashtags.length }), step5Duration]
+          [contentId, JSON.stringify({ captionLength: captionText.length, hashtagCount: hashtags.length }), step7Duration]
         );
 
         steps.push({
           step: 'caption',
           status: 'success',
-          duration_ms: step5Duration,
+          duration_ms: step7Duration,
           data: { captionLength: captionText.length, hashtagCount: hashtags.length },
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         run(
           `INSERT INTO generation_logs (content_id, step, status, error_message, duration_ms) VALUES (?, 'caption', 'failed', ?, ?)`,
-          [contentId, msg, Date.now() - step5Start]
+          [contentId, msg, Date.now() - step7Start]
         );
         // Caption failure is non-fatal, continue pipeline
-        steps.push({ step: 'caption', status: 'failed', duration_ms: Date.now() - step5Start, error: msg });
+        steps.push({ step: 'caption', status: 'failed', duration_ms: Date.now() - step7Start, error: msg });
       }
     } else {
       steps.push({ step: 'caption', status: 'skipped' });
     }
 
-    // ─── Step 6: Schedule Publishing ─────────────────────────────────────
+    // ─── Step 8: Schedule Publishing ─────────────────────────────────────
     if (body.platforms && body.platforms.length > 0) {
-      const step6Start = Date.now();
+      const step8Start = Date.now();
       try {
         const scheduledAt = body.scheduled_at || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
@@ -303,12 +449,12 @@ export async function POST(request: Request) {
         steps.push({
           step: 'publish_schedule',
           status: 'success',
-          duration_ms: Date.now() - step6Start,
+          duration_ms: Date.now() - step8Start,
           data: { job_count: publishJobIds.length, scheduled_at: scheduledAt },
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        steps.push({ step: 'publish_schedule', status: 'failed', duration_ms: Date.now() - step6Start, error: msg });
+        steps.push({ step: 'publish_schedule', status: 'failed', duration_ms: Date.now() - step8Start, error: msg });
         return Response.json({
           success: false,
           error: `Publish scheduling failed: ${msg}`,

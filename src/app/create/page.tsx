@@ -52,6 +52,11 @@ export default function CreatePage() {
   const [script, setScript] = useState('');
   const [scriptGenerated, setScriptGenerated] = useState(false);
   const [audioGenerated, setAudioGenerated] = useState(false);
+  const [ttsProvider, setTtsProvider] = useState<'edge-tts' | 'elevenlabs'>('edge-tts');
+  const [imageGenerated, setImageGenerated] = useState(false);
+  const [imageGenerating, setImageGenerating] = useState(false);
+  const [bgmGenerated, setBgmGenerated] = useState(false);
+  const [bgmGenerating, setBgmGenerating] = useState(false);
 
   // Step 3 state
   const [videoPath, setVideoPath] = useState<string | null>(null);
@@ -123,6 +128,7 @@ export default function CreatePage() {
     try {
       await apiPost('/api/generate/tts', {
         content_id: contentId,
+        tts_provider: ttsProvider,
       });
       setAudioGenerated(true);
       setCurrentStep(3);
@@ -316,6 +322,141 @@ export default function CreatePage() {
                 className="min-h-[300px] font-mono text-sm"
               />
 
+              {/* Premium Options */}
+              <div className="border border-gray-200 rounded-xl p-4 space-y-4 bg-gray-50">
+                <p className="text-sm font-semibold text-[#111827]">생성 옵션</p>
+
+                {/* TTS Provider Selection */}
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium text-[#6b7280]">음성 엔진</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label
+                      className={cn(
+                        'flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-all text-sm',
+                        ttsProvider === 'edge-tts'
+                          ? 'border-[#1a5c2e] bg-white shadow-sm'
+                          : 'border-gray-200 hover:border-gray-300'
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="tts-provider"
+                        value="edge-tts"
+                        checked={ttsProvider === 'edge-tts'}
+                        onChange={() => setTtsProvider('edge-tts')}
+                        className="accent-[#1a5c2e]"
+                      />
+                      <div>
+                        <span className="font-medium text-[#111827]">edge-tts</span>
+                        <span className="text-[#6b7280] ml-1">(무료)</span>
+                      </div>
+                    </label>
+                    <label
+                      className={cn(
+                        'flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-all text-sm',
+                        ttsProvider === 'elevenlabs'
+                          ? 'border-amber-400 bg-amber-50 shadow-sm'
+                          : 'border-gray-200 hover:border-gray-300'
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="tts-provider"
+                        value="elevenlabs"
+                        checked={ttsProvider === 'elevenlabs'}
+                        onChange={() => setTtsProvider('elevenlabs')}
+                        className="accent-amber-500"
+                      />
+                      <div>
+                        <span className="font-medium text-[#111827]">ElevenLabs</span>
+                        <span className="text-amber-600 ml-1 text-xs font-semibold">PRO</span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Image Generation Button */}
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={imageGenerating || imageGenerated || !contentId}
+                    onClick={async () => {
+                      if (!contentId) return;
+                      setImageGenerating(true);
+                      try {
+                        await apiPost('/api/generate/image', { content_id: contentId });
+                        setImageGenerated(true);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : '이미지 생성 실패');
+                      } finally {
+                        setImageGenerating(false);
+                      }
+                    }}
+                  >
+                    {imageGenerating ? (
+                      <>
+                        <div className="w-3 h-3 border-2 border-[#1a5c2e] border-t-transparent rounded-full animate-spin" />
+                        이미지 생성 중...
+                      </>
+                    ) : imageGenerated ? (
+                      <>
+                        <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        썸네일 생성됨
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        DALL-E 3 썸네일 생성
+                      </>
+                    )}
+                  </Button>
+
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={bgmGenerating || bgmGenerated || !contentId}
+                    onClick={async () => {
+                      if (!contentId) return;
+                      setBgmGenerating(true);
+                      try {
+                        await apiPost('/api/generate/bgm', { content_id: contentId });
+                        setBgmGenerated(true);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : 'BGM 생성 실패');
+                      } finally {
+                        setBgmGenerating(false);
+                      }
+                    }}
+                  >
+                    {bgmGenerating ? (
+                      <>
+                        <div className="w-3 h-3 border-2 border-[#1a5c2e] border-t-transparent rounded-full animate-spin" />
+                        BGM 생성 중...
+                      </>
+                    ) : bgmGenerated ? (
+                      <>
+                        <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        BGM 생성됨
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                        </svg>
+                        Mubert BGM 생성
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+
               {!audioGenerated && (
                 <div className="flex justify-end">
                   <Button onClick={handleGenerateTTS} disabled={loading}>
@@ -329,7 +470,7 @@ export default function CreatePage() {
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                         </svg>
-                        음성 생성
+                        {ttsProvider === 'elevenlabs' ? '프리미엄 음성 생성 (ElevenLabs)' : '음성 생성 (edge-tts)'}
                       </>
                     )}
                   </Button>

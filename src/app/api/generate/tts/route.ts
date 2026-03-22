@@ -1,7 +1,9 @@
+import path from 'path';
+import fs from 'fs';
 import { queryOne, run } from '@/lib/db';
 import { generateTTS, speedToRate } from '@/lib/tts';
+import { generatePremiumTTS } from '@/lib/elevenlabs';
 import type {
-  GenerateTTSRequest,
   ApiResponse,
 } from '@/types';
 
@@ -11,12 +13,19 @@ interface ContentRow {
   status: string;
 }
 
+interface TTSRequestBody {
+  content_id: number;
+  voice?: string;
+  speed?: number;
+  tts_provider?: 'elevenlabs' | 'edge-tts';
+}
+
 export async function POST(request: Request) {
   const startTime = Date.now();
   let contentId: number | undefined;
 
   try {
-    const body: GenerateTTSRequest = await request.json();
+    const body: TTSRequestBody = await request.json();
 
     if (!body.content_id) {
       return Response.json(
@@ -26,6 +35,7 @@ export async function POST(request: Request) {
     }
 
     contentId = body.content_id;
+    const provider = body.tts_provider || 'edge-tts';
 
     // Fetch content
     const content = queryOne<ContentRow>(
@@ -50,22 +60,73 @@ export async function POST(request: Request) {
     // Log start
     run(
       `INSERT INTO generation_logs (content_id, step, status, input_params) VALUES (?, 'tts', 'started', ?)`,
-      [contentId, JSON.stringify({ voice: body.voice, speed: body.speed })]
+      [contentId, JSON.stringify({ voice: body.voice, speed: body.speed, provider })]
     );
 
-    // Generate TTS
-    const rate = body.speed ? speedToRate(body.speed) : undefined;
-    const result = await generateTTS(content.script, contentId, {
-      voice: body.voice,
-      rate,
-    });
+    let audioPath: string;
+    let subtitlePath: string;
+    let audioSizeBytes: number;
+    let subtitleSizeBytes = 0;
+    let voiceUsed: string;
+    let rateUsed: string = '+0%';
+
+    if (provider === 'elevenlabs') {
+      // Try ElevenLabs, fall back to edge-tts on failure
+      try {
+        const projectRoot = process.cwd();
+        const premiumAudioPath = path.join(projectRoot, 'output', 'audio', `${contentId}.mp3`);
+
+        const premiumResult = await generatePremiumTTS({
+          text: content.script,
+          voiceId: body.voice,
+          outputPath: premiumAudioPath,
+        });
+
+        audioPath = premiumResult.audioPath;
+        audioSizeBytes = fs.statSync(audioPath).size;
+        voiceUsed = body.voice || 'elevenlabs-default';
+
+        // ElevenLabs doesn't produce subtitles, create empty VTT
+        subtitlePath = path.join(projectRoot, 'output', 'subtitles', `${contentId}.vtt`);
+        const subtitleDir = path.dirname(subtitlePath);
+        if (!fs.existsSync(subtitleDir)) fs.mkdirSync(subtitleDir, { recursive: true });
+        fs.writeFileSync(subtitlePath, 'WEBVTT\n\n');
+        subtitleSizeBytes = fs.statSync(subtitlePath).size;
+      } catch (elevenLabsErr) {
+        console.warn('[TTS] ElevenLabs failed, falling back to edge-tts:', elevenLabsErr);
+        const rate = body.speed ? speedToRate(body.speed) : undefined;
+        const result = await generateTTS(content.script, contentId, {
+          voice: body.voice,
+          rate,
+        });
+        audioPath = result.audioPath;
+        subtitlePath = result.subtitlePath;
+        audioSizeBytes = result.audioSizeBytes;
+        subtitleSizeBytes = result.subtitleSizeBytes;
+        voiceUsed = result.voice;
+        rateUsed = result.rate;
+      }
+    } else {
+      // Use edge-tts
+      const rate = body.speed ? speedToRate(body.speed) : undefined;
+      const result = await generateTTS(content.script, contentId, {
+        voice: body.voice,
+        rate,
+      });
+      audioPath = result.audioPath;
+      subtitlePath = result.subtitlePath;
+      audioSizeBytes = result.audioSizeBytes;
+      subtitleSizeBytes = result.subtitleSizeBytes;
+      voiceUsed = result.voice;
+      rateUsed = result.rate;
+    }
 
     const durationMs = Date.now() - startTime;
 
     // Update content
     run(
       `UPDATE contents SET audio_path = ?, subtitle_path = ?, status = 'audio_ready' WHERE id = ?`,
-      [result.audioPath, result.subtitlePath, contentId]
+      [audioPath, subtitlePath, contentId]
     );
 
     // Log completion
@@ -74,10 +135,11 @@ export async function POST(request: Request) {
       [
         contentId,
         JSON.stringify({
-          audioPath: result.audioPath,
-          subtitlePath: result.subtitlePath,
-          audioSizeBytes: result.audioSizeBytes,
-          voice: result.voice,
+          audioPath,
+          subtitlePath,
+          audioSizeBytes,
+          voice: voiceUsed,
+          provider,
         }),
         durationMs,
       ]
@@ -86,12 +148,13 @@ export async function POST(request: Request) {
     return Response.json({
       success: true,
       data: {
-        audioPath: result.audioPath,
-        subtitlePath: result.subtitlePath,
-        audioSizeBytes: result.audioSizeBytes,
-        subtitleSizeBytes: result.subtitleSizeBytes,
-        voice: result.voice,
-        rate: result.rate,
+        audioPath,
+        subtitlePath,
+        audioSizeBytes,
+        subtitleSizeBytes,
+        voice: voiceUsed,
+        rate: rateUsed,
+        provider,
         generationTimeMs: durationMs,
       },
     } satisfies ApiResponse);

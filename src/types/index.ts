@@ -47,7 +47,7 @@ export interface CalendarEvent {
 export interface GenerationLog {
   id: number;
   content_id: number;
-  step: 'script' | 'tts' | 'video' | 'caption' | 'pipeline';
+  step: 'script' | 'tts' | 'video' | 'caption' | 'pipeline' | 'image' | 'bgm' | 'ai_video';
   status: 'started' | 'completed' | 'failed';
   input_params: Record<string, unknown> | null;
   output_result: Record<string, unknown> | null;
@@ -171,6 +171,10 @@ export interface PipelineRequest {
   platforms: number[];           // platform_account_ids
   scheduled_at?: string;
   auto_caption?: boolean;
+  premium_mode?: boolean;        // Use ElevenLabs + DALL-E + Mubert
+  tts_provider?: 'elevenlabs' | 'edge-tts';
+  generate_image?: boolean;      // Auto-generate thumbnail with DALL-E
+  generate_bgm?: boolean;        // Auto-generate BGM with Mubert
 }
 
 export interface BulkPipelineRequest {
