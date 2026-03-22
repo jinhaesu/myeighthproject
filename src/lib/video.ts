@@ -345,41 +345,25 @@ async function generateSlideshowVideo(
       console.log(`[Video] Skipping Kling for section ${i}: ${reason}`);
     }
 
-    // Fallback: use DALL-E static image or solid color
+    // NO FALLBACK: Kling must succeed. Static images are not acceptable.
     if (!clipGenerated) {
-      if (imageResult?.imagePath && fs.existsSync(imageResult.imagePath)) {
-        console.log(`[Video] FALLBACK: Using static DALL-E image for section ${i} (${imageResult.imagePath})`);
-        clipPaths.push(imageResult.imagePath);
-        isStaticImage.push(true);
-      } else {
-        // Generate solid color fallback
-        const fallbackPath = path.join(imageDir, `${contentId}_fallback_${i}.png`);
-        console.log(`[Video] FALLBACK: Using solid color for section ${i} (no image available)`);
-        await generateSolidColorImage(backgroundColor, width, height, fallbackPath);
-        clipPaths.push(fallbackPath);
-        isStaticImage.push(true);
-      }
+      const reason = !hasKlingKey
+        ? 'Kling API 키가 설정되지 않았습니다 (KLING_ACCESS_KEY, KLING_SECRET_KEY)'
+        : 'Kling 영상 생성에 실패했습니다. Kling 계정 잔액을 확인해주세요.';
+      throw new Error(`영상 생성 실패 (섹션 ${i + 1}): ${reason}`);
     }
   }
 
-  // Summary log
-  const klingCount = isStaticImage.filter(s => !s).length;
-  const staticCount = isStaticImage.filter(s => s).length;
-  console.log(`[Video] Clip generation complete: ${klingCount} Kling videos, ${staticCount} static image fallbacks`);
+  // All sections must be Kling video clips
+  const klingCount = clipPaths.length;
+  console.log(`[Video] All ${klingCount} sections generated as Kling video clips`);
 
   // Step 3: Build ffmpeg command to concat clips + audio + subtitles
   const args: string[] = ['-y'];
 
-  // Add each clip/image as input
-  for (let i = 0; i < limitedSections.length; i++) {
-    if (isStaticImage[i]) {
-      // Static image: loop for section duration
-      const duration = Math.max(limitedSections[i].duration_seconds || 5, 1);
-      args.push('-loop', '1', '-t', String(duration), '-i', clipPaths[i]);
-    } else {
-      // Video clip from Kling
-      args.push('-i', clipPaths[i]);
-    }
+  // Add each Kling video clip as input (no static images)
+  for (let i = 0; i < clipPaths.length; i++) {
+    args.push('-i', clipPaths[i]);
   }
 
   // Add audio input
