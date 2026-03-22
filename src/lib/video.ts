@@ -26,6 +26,7 @@ export interface VideoResult {
 
 export interface SectionInput {
   body: string;
+  visual_prompt?: string;
   duration_seconds: number;
 }
 
@@ -72,11 +73,12 @@ interface SectionImageResult {
 
 async function generateSectionImage(
   client: OpenAI,
-  sectionBody: string,
+  section: SectionInput,
   outputPath: string,
 ): Promise<SectionImageResult | null> {
   try {
-    const prompt = buildImagePrompt(sectionBody);
+    // Use visual_prompt from AI-generated script if available, otherwise fallback
+    const prompt = section.visual_prompt || buildImagePrompt(section.body);
 
     const response = await client.images.generate({
       model: 'dall-e-3',
@@ -138,7 +140,7 @@ async function generateSectionImages(
   for (let i = 0; i < limitedSections.length; i++) {
     const outputPath = path.join(imageDir, `${contentId}_section_${i}.png`);
     console.log(`[Video] Generating image ${i + 1}/${limitedSections.length} for content ${contentId}...`);
-    const result = await generateSectionImage(client, limitedSections[i].body, outputPath);
+    const result = await generateSectionImage(client, limitedSections[i], outputPath);
     imageResults.push(result);
   }
 
@@ -301,8 +303,10 @@ async function generateSlideshowVideo(
     // Try Kling image-to-video if we have an image URL and API keys
     if (hasKlingKey && imageResult?.imageUrl) {
       try {
-        const sectionBody = limitedSections[i].body.slice(0, 150).replace(/\n/g, ' ').trim();
-        const klingPrompt = `Smooth cinematic motion, gentle camera movement, warm lighting. ${sectionBody}`;
+        // Use visual_prompt for Kling if available, otherwise fallback to body-based prompt
+        const klingPrompt = limitedSections[i].visual_prompt
+          ? `Smooth cinematic motion, gentle camera movement. ${limitedSections[i].visual_prompt}`
+          : `Smooth cinematic motion, gentle camera movement, warm lighting. ${limitedSections[i].body.slice(0, 150).replace(/\n/g, ' ').trim()}`;
 
         console.log(`[Video] Generating Kling AI video clip ${i + 1}/${limitedSections.length}...`);
         await generateKlingVideo({

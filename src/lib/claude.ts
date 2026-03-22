@@ -82,10 +82,10 @@ export async function generateScript(
     throw new Error('Claude response missing sections array');
   }
 
-  // Build full script from sections
+  // Build full script from sections (body only, no tags - TTS reads this directly)
   const fullScript = parsed.sections
     .sort((a, b) => a.order - b.order)
-    .map((s) => `[${s.title}]\n${s.body}`)
+    .map((s) => s.body)
     .join('\n\n');
 
   const totalDuration = parsed.sections.reduce(

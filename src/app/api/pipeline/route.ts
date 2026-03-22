@@ -421,12 +421,13 @@ export async function POST(request: Request) {
           [contentId]
         );
 
-        // Prepare sections for slideshow
-        let videoSections: Array<{ body: string; duration_seconds: number }> | undefined;
+        // Prepare sections for slideshow (include visual_prompt for DALL-E/Kling)
+        let videoSections: Array<{ body: string; visual_prompt?: string; duration_seconds: number }> | undefined;
 
         if (scriptSections.length > 0) {
           videoSections = scriptSections.map((s) => ({
             body: s.body,
+            visual_prompt: s.visual_prompt,
             duration_seconds: s.duration_seconds,
           }));
         }
@@ -492,10 +493,11 @@ export async function POST(request: Request) {
               [contentId]
             );
 
-            let videoSections: Array<{ body: string; duration_seconds: number }> | undefined;
+            let videoSections: Array<{ body: string; visual_prompt?: string; duration_seconds: number }> | undefined;
             if (scriptSections.length > 0) {
               videoSections = scriptSections.map((s) => ({
                 body: s.body,
+                visual_prompt: s.visual_prompt,
                 duration_seconds: s.duration_seconds,
               }));
             }

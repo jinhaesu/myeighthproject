@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     }
 
     // Parse sections from content DB or request body
-    let sections: Array<{ body: string; duration_seconds: number }> | undefined;
+    let sections: Array<{ body: string; visual_prompt?: string; duration_seconds: number }> | undefined;
 
     if (body.sections && body.sections.length > 0) {
       sections = body.sections;
@@ -61,6 +61,7 @@ export async function POST(request: Request) {
         if (Array.isArray(parsed) && parsed.length > 0) {
           sections = parsed.map((s) => ({
             body: s.body,
+            visual_prompt: s.visual_prompt,
             duration_seconds: s.duration_seconds,
           }));
         }

@@ -11,7 +11,7 @@ import {
   statusColor,
   formatDate,
 } from '@/lib/utils';
-import type { Content } from '@/types';
+import type { Content, ScriptSection } from '@/types';
 
 export default function ContentDetailPage({
   params,
@@ -176,8 +176,48 @@ export default function ContentDetailPage({
           </Button>
         </div>
         {content.script ? (
-          <div className="bg-gray-50 rounded-xl p-4 text-sm text-[#374151] whitespace-pre-wrap font-mono leading-relaxed max-h-[400px] overflow-y-auto">
-            {content.script}
+          <div className="space-y-4">
+            {/* Section-by-section view with visual descriptions */}
+            {content.sections && content.sections.length > 0 && (
+              <div className="space-y-3">
+                {(content.sections as ScriptSection[])
+                  .sort((a, b) => a.order - b.order)
+                  .map((section, idx) => (
+                  <div key={idx} className="border border-gray-200 rounded-xl overflow-hidden">
+                    <div className="bg-gray-50 px-4 py-2 flex items-center justify-between border-b border-gray-100">
+                      <span className="text-xs font-semibold text-[#374151]">
+                        {section.order}. {section.title}
+                      </span>
+                      <span className="text-xs text-[#6b7280]">{section.duration_seconds}s</span>
+                    </div>
+                    <div className="p-4 space-y-3">
+                      <p className="text-sm text-[#111827] leading-relaxed">{section.body}</p>
+                      {section.visual_description && (
+                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                          <p className="text-xs font-medium text-blue-600 mb-1 flex items-center gap-1">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            시각 연출
+                          </p>
+                          <p className="text-xs text-blue-800">{section.visual_description}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Full narration script */}
+            <details className="group">
+              <summary className="text-xs font-medium text-[#6b7280] cursor-pointer hover:text-[#111827] transition-colors">
+                전체 나레이션 텍스트 보기
+              </summary>
+              <div className="mt-2 bg-gray-50 rounded-xl p-4 text-sm text-[#374151] whitespace-pre-wrap font-mono leading-relaxed max-h-[300px] overflow-y-auto">
+                {content.script}
+              </div>
+            </details>
           </div>
         ) : (
           <p className="text-sm text-[#6b7280]">스크립트가 아직 생성되지 않았습니다.</p>

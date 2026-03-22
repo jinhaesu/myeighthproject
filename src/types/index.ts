@@ -8,8 +8,10 @@ export type Language = 'ko' | 'en';
 
 export interface ScriptSection {
   order: number;
-  title: string;
-  body: string;
+  title: string;              // 내부 참조용 (TTS에 안 읽힘)
+  body: string;               // 나레이션 대본 (TTS가 읽을 텍스트만, 태그 없이)
+  visual_prompt: string;      // 영상/이미지 생성용 프롬프트 (영어)
+  visual_description: string; // 시각 연출 설명 (한국어, 사용자 확인용)
   duration_seconds: number;
 }
 
@@ -130,7 +132,7 @@ export interface GenerateVideoRequest {
   background_image?: string;
   font_size?: number;
   generate_images?: boolean;        // Generate DALL-E images for sections (default true)
-  sections?: Array<{ body: string; duration_seconds: number }>;
+  sections?: Array<{ body: string; visual_prompt?: string; duration_seconds: number }>;
 }
 
 export interface CreatePlatformAccountRequest {
