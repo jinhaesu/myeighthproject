@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+*.md
+.env.local
+output/audio/*
+output/videos/*
+output/subtitles/*
+output/scripts/*
+database/*.db

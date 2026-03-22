@@ -28,7 +28,15 @@ const DEFAULT_WIDTH = 1080;
 const DEFAULT_HEIGHT = 1920;
 const DEFAULT_BG_COLOR = '#1a1a2e';
 const DEFAULT_FONT_SIZE = 42;
-const DEFAULT_FONT_PATH = 'C:/Windows/Fonts/malgunbd.ttf';
+
+function getDefaultFontPath(): string {
+  if (process.env.VIDEO_FONT_PATH) return process.env.VIDEO_FONT_PATH;
+  return process.platform === 'win32'
+    ? 'C:/Windows/Fonts/malgunbd.ttf'
+    : '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc';
+}
+
+const DEFAULT_FONT_PATH = getDefaultFontPath();
 
 // ─── Video Generation ──────────────────────────────────────────────────────
 
