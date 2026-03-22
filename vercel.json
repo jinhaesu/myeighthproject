@@ -1,8 +1,10 @@
 {
-  "rewrites": [
+  "headers": [
     {
-      "source": "/api/:path*",
-      "destination": "https://myeighthproject-production.up.railway.app/api/:path*"
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Frame-Options", "value": "DENY" }
+      ]
     }
   ]
 }
