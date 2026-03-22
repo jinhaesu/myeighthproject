@@ -1,8 +1,9 @@
-import { execFile } from 'child_process';
+import { exec } from 'child_process';
 import path from 'path';
+import fs from 'fs';
 import { promisify } from 'util';
 
-const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -52,20 +53,28 @@ export async function generateTTS(
 
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
 
+  // Write text to temp file to avoid encoding issues with command-line args
+  const textFilePath = path.join(audioDir, `${contentId}_input.txt`);
+  fs.writeFileSync(textFilePath, text, 'utf-8');
+
   const args = [
-    scriptPath,
-    '--text', text,
-    '--output', audioPath,
-    '--subtitle', subtitlePath,
+    `"${scriptPath}"`,
+    '--text-file', `"${textFilePath}"`,
+    '--output', `"${audioPath}"`,
+    '--subtitle', `"${subtitlePath}"`,
     '--voice', voice,
     '--rate', rate,
   ];
 
   try {
-    const { stdout, stderr } = await execFileAsync(pythonCmd, args, {
-      timeout: 120_000, // 2 minutes
+    const { stdout, stderr } = await execAsync(`${pythonCmd} ${args.join(' ')}`, {
+      timeout: 120_000,
       maxBuffer: 10 * 1024 * 1024,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     });
+
+    // Clean up temp file
+    try { fs.unlinkSync(textFilePath); } catch { /* ignore */ }
 
     if (stderr) {
       console.warn('[TTS] stderr:', stderr);

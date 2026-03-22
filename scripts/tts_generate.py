@@ -64,7 +64,8 @@ async def generate_tts(
 
 def main():
     parser = argparse.ArgumentParser(description="Nuldam TTS Generator")
-    parser.add_argument("--text", required=True, help="Text to convert to speech")
+    parser.add_argument("--text", help="Text to convert to speech")
+    parser.add_argument("--text-file", help="Path to file containing text (UTF-8)")
     parser.add_argument("--output", required=True, help="Output audio file path (.mp3)")
     parser.add_argument("--subtitle", required=True, help="Output subtitle file path (.vtt)")
     parser.add_argument("--voice", default="ko-KR-SunHiNeural", help="TTS voice name")
@@ -72,11 +73,21 @@ def main():
 
     args = parser.parse_args()
 
+    # Get text from --text or --text-file
+    if args.text_file:
+        with open(args.text_file, "r", encoding="utf-8") as f:
+            text = f.read().strip()
+    elif args.text:
+        text = args.text
+    else:
+        print("ERROR: Either --text or --text-file is required", file=sys.stderr)
+        sys.exit(1)
+
     import json
 
     result = asyncio.run(
         generate_tts(
-            text=args.text,
+            text=text,
             output_path=args.output,
             subtitle_path=args.subtitle,
             voice=args.voice,
