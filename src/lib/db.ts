@@ -157,13 +157,13 @@ function runMigrations(db: Database.Database): void {
       "SELECT sql FROM sqlite_master WHERE type='table' AND name='generation_logs'"
     ).get() as { sql: string } | undefined;
 
-    if (tableInfo?.sql && !tableInfo.sql.includes("'caption'")) {
+    if (tableInfo?.sql && !tableInfo.sql.includes("'image'")) {
       // Need to recreate table with expanded CHECK constraint
       db.exec(`
         CREATE TABLE IF NOT EXISTS generation_logs_new (
           id              INTEGER PRIMARY KEY AUTOINCREMENT,
           content_id      INTEGER NOT NULL REFERENCES contents(id) ON DELETE CASCADE,
-          step            TEXT    NOT NULL CHECK (step IN ('script', 'tts', 'video', 'caption', 'pipeline')),
+          step            TEXT    NOT NULL CHECK (step IN ('script', 'tts', 'video', 'caption', 'pipeline', 'image', 'bgm', 'ai_video')),
           status          TEXT    NOT NULL CHECK (status IN ('started', 'completed', 'failed')),
           input_params    TEXT,
           output_result   TEXT,

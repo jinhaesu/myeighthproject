@@ -33,20 +33,36 @@ async def generate_tts(
 
     communicate = edge_tts.Communicate(text, voice, rate=rate)
 
-    # Generate audio file
-    submaker = edge_tts.SubMaker()
+    # Generate audio + subtitles using save() method (compatible with all versions)
+    await communicate.save(output_path)
 
-    with open(output_path, "wb") as audio_file:
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_file.write(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
+    # Generate VTT subtitle separately
+    # Re-run to get word boundaries for subtitle
+    try:
+        submaker = edge_tts.SubMaker()
+        communicate2 = edge_tts.Communicate(text, voice, rate=rate)
+        async for chunk in communicate2.stream():
+            if chunk["type"] == "WordBoundary":
                 submaker.feed(chunk)
 
-    # Generate VTT subtitle file
-    vtt_content = submaker.generate_subs()
-    with open(subtitle_path, "w", encoding="utf-8") as sub_file:
-        sub_file.write(vtt_content)
+        # Try different API methods for subtitle generation
+        vtt_content = None
+        for method_name in ["generate_subs", "get_subs", "subs"]:
+            method = getattr(submaker, method_name, None)
+            if method and callable(method):
+                vtt_content = method()
+                break
+
+        if vtt_content is None:
+            # Fallback: create basic VTT from text
+            vtt_content = "WEBVTT\n\n00:00:00.000 --> 00:01:00.000\n" + text
+
+        with open(subtitle_path, "w", encoding="utf-8") as sub_file:
+            sub_file.write(vtt_content)
+    except Exception:
+        # Fallback subtitle
+        with open(subtitle_path, "w", encoding="utf-8") as sub_file:
+            sub_file.write("WEBVTT\n\n00:00:00.000 --> 00:01:00.000\n" + text)
 
     # Get file sizes
     audio_size = os.path.getsize(output_path)

@@ -73,8 +73,11 @@ export async function POST(request: Request) {
     if (provider === 'elevenlabs') {
       // Try ElevenLabs, fall back to edge-tts on failure
       try {
-        const projectRoot = process.cwd();
-        const premiumAudioPath = path.join(projectRoot, 'output', 'audio', `${contentId}.mp3`);
+        const isProduction = process.env.NODE_ENV === 'production';
+        const outBase = isProduction ? '/tmp' : process.cwd();
+        const premiumAudioPath = path.join(outBase, 'output', 'audio', `${contentId}.mp3`);
+        const audioDir = path.dirname(premiumAudioPath);
+        if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true });
 
         const premiumResult = await generatePremiumTTS({
           text: content.script,
@@ -87,7 +90,7 @@ export async function POST(request: Request) {
         voiceUsed = body.voice || 'elevenlabs-default';
 
         // ElevenLabs doesn't produce subtitles, create empty VTT
-        subtitlePath = path.join(projectRoot, 'output', 'subtitles', `${contentId}.vtt`);
+        subtitlePath = path.join(outBase, 'output', 'subtitles', `${contentId}.vtt`);
         const subtitleDir = path.dirname(subtitlePath);
         if (!fs.existsSync(subtitleDir)) fs.mkdirSync(subtitleDir, { recursive: true });
         fs.writeFileSync(subtitlePath, 'WEBVTT\n\n');
