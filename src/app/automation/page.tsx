@@ -181,24 +181,11 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
     setRunning(true);
     setResult(null);
     setCompletedSteps([]);
-
-    // Simulate step progression
-    const stepTimer = setInterval(() => {
-      setCurrentStep((prev) => {
-        const currentIdx = prev ? STEP_ORDER.indexOf(prev) : -1;
-        const nextIdx = currentIdx + 1;
-        if (nextIdx < STEP_ORDER.length) {
-          return STEP_ORDER[nextIdx];
-        }
-        return prev;
-      });
-    }, 3000);
-
-    // Start with first step
     setCurrentStep(STEP_ORDER[0]);
 
     try {
-      const res = await apiPost<PipelineResult>('/api/pipeline', {
+      // Start pipeline (returns immediately with task_id)
+      const res = await apiPost<{ task_id: number; content_id: number }>('/api/pipeline', {
         content_type: contentType,
         topic,
         language,
@@ -211,15 +198,60 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
         avatar_id: videoType === 'heygen' ? selectedAvatarId : undefined,
       });
 
-      clearInterval(stepTimer);
-
-      if (res.data) {
-        setResult(res.data);
-        setCompletedSteps(res.data.steps);
-        setCurrentStep(null);
+      if (!res.data?.content_id) {
+        throw new Error('파이프라인 시작 실패: content_id를 받지 못했습니다.');
       }
+
+      const pipelineContentId = res.data.content_id;
+
+      // Poll for pipeline status
+      const pollForStatus = (): Promise<void> => {
+        return new Promise((resolve, reject) => {
+          const interval = setInterval(async () => {
+            try {
+              const statusRes = await apiGet<{
+                status: 'processing' | 'completed' | 'failed';
+                progress: string | null;
+                current_step: string | null;
+                steps_completed: number | null;
+                result: PipelineResult | null;
+                error: string | null;
+              }>(`/api/pipeline/status?content_id=${pipelineContentId}`);
+
+              if (statusRes.data) {
+                const { status, current_step, result: pipelineResult, error: taskError } = statusRes.data;
+
+                // Update current step display
+                if (current_step) {
+                  const stepIdx = STEP_ORDER.indexOf(current_step);
+                  if (stepIdx >= 0) {
+                    setCurrentStep(STEP_ORDER[stepIdx]);
+                  }
+                }
+
+                if (status === 'completed') {
+                  clearInterval(interval);
+                  if (pipelineResult) {
+                    setResult(pipelineResult);
+                    setCompletedSteps(pipelineResult.steps || []);
+                  }
+                  setCurrentStep(null);
+                  resolve();
+                } else if (status === 'failed') {
+                  clearInterval(interval);
+                  reject(new Error(taskError || '파이프라인 실행 실패'));
+                }
+              }
+            } catch {
+              // Polling error, continue
+              console.warn('[Pipeline] Status polling error, will retry...');
+            }
+          }, 5000);
+        });
+      };
+
+      await pollForStatus();
     } catch (err) {
-      clearInterval(stepTimer);
       setError(err instanceof Error ? err.message : '파이프라인 실행 실패');
     } finally {
       setRunning(false);

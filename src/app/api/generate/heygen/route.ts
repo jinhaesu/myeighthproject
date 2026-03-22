@@ -29,12 +29,80 @@ const AVATAR_STYLE_MAP: Record<string, string> = {
   narrator: 'Abigail_expressive_2024112501',
 };
 
+// ─── Background processing function ─────────────────────────────────────────
+
+async function processHeyGenGeneration(
+  contentId: number,
+  logId: number,
+  scriptText: string,
+  language: string,
+  avatarId: string | undefined,
+  voiceId: string | undefined,
+  videoPath: string,
+) {
+  const startTime = Date.now();
+
+  try {
+    // Update progress
+    run(
+      `UPDATE generation_logs SET output_result = ? WHERE id = ?`,
+      [
+        JSON.stringify({ message: 'HeyGen 아바타 영상 생성 중...' }),
+        logId,
+      ]
+    );
+
+    // Generate HeyGen avatar video
+    const result = await generateHeyGenVideo({
+      script: scriptText,
+      avatarId,
+      voiceId,
+      language: (language as 'ko' | 'en') || 'ko',
+      outputPath: videoPath,
+    });
+
+    const durationMs = Date.now() - startTime;
+
+    // Update content status
+    run(
+      `UPDATE contents SET video_path = ?, status = 'video_ready' WHERE id = ?`,
+      [result.videoPath, contentId]
+    );
+
+    // Mark log as completed
+    run(
+      `UPDATE generation_logs SET status = 'completed', output_result = ?, duration_ms = ? WHERE id = ?`,
+      [
+        JSON.stringify({
+          video_path: result.videoPath,
+          videoPath: result.videoPath,
+          videoId: result.videoId,
+          durationSec: result.durationSec,
+          message: 'HeyGen 영상 생성 완료!',
+        }),
+        durationMs,
+        logId,
+      ]
+    );
+
+    console.log(`[HeyGen] Background generation completed for content ${contentId} (${durationMs}ms)`);
+  } catch (error) {
+    const durationMs = Date.now() - startTime;
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+
+    // Mark log as failed
+    run(
+      `UPDATE generation_logs SET status = 'failed', error_message = ?, duration_ms = ? WHERE id = ?`,
+      [msg, durationMs, logId]
+    );
+
+    console.error(`[HeyGen] Background generation failed for content ${contentId}: ${msg}`);
+  }
+}
+
 // ─── POST /api/generate/heygen ──────────────────────────────────────────────
 
 export async function POST(request: Request) {
-  const startTime = Date.now();
-  let contentId: number | undefined;
-
   try {
     const body: HeyGenRequest = await request.json();
 
@@ -45,7 +113,7 @@ export async function POST(request: Request) {
       );
     }
 
-    contentId = body.content_id;
+    const contentId = body.content_id;
 
     // Check HeyGen API key
     if (!process.env.HEYGEN_API_KEY) {
@@ -99,9 +167,9 @@ export async function POST(request: Request) {
     const outBase = isProduction ? '/tmp' : process.cwd();
     const videoPath = path.join(outBase, 'output', 'videos', `${contentId}_heygen.mp4`);
 
-    // Log start
-    run(
-      `INSERT INTO generation_logs (content_id, step, status, input_params) VALUES (?, 'heygen', 'started', ?)`,
+    // Create generation log with 'started' status
+    const logResult = run(
+      `INSERT INTO generation_logs (content_id, step, status, input_params, output_result) VALUES (?, 'heygen', 'started', ?, ?)`,
       [
         contentId,
         JSON.stringify({
@@ -110,59 +178,37 @@ export async function POST(request: Request) {
           language: content.language,
           scriptLength: scriptText.length,
         }),
+        JSON.stringify({ message: 'HeyGen 영상 생성 대기 중...' }),
       ]
     );
 
-    // Generate HeyGen avatar video
-    const result = await generateHeyGenVideo({
-      script: scriptText,
+    const logId = Number(logResult.lastInsertRowid);
+
+    // Start background processing (fire-and-forget)
+    processHeyGenGeneration(
+      contentId,
+      logId,
+      scriptText,
+      content.language,
       avatarId,
-      voiceId: body.voice_id,
-      language: (content.language as 'ko' | 'en') || 'ko',
-      outputPath: videoPath,
+      body.voice_id,
+      videoPath,
+    ).catch((err) => {
+      console.error(`[HeyGen] Unhandled error in background processing:`, err);
     });
 
-    const durationMs = Date.now() - startTime;
-
-    // Update content status
-    run(
-      `UPDATE contents SET video_path = ?, status = 'video_ready' WHERE id = ?`,
-      [result.videoPath, contentId]
-    );
-
-    // Log completion
-    run(
-      `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms) VALUES (?, 'heygen', 'completed', ?, ?)`,
-      [
-        contentId,
-        JSON.stringify({
-          videoPath: result.videoPath,
-          videoId: result.videoId,
-          durationSec: result.durationSec,
-        }),
-        durationMs,
-      ]
-    );
-
+    // Return immediately with task info
     return Response.json({
       success: true,
       data: {
-        videoPath: result.videoPath,
-        videoId: result.videoId,
-        durationSec: result.durationSec,
-        generationTimeMs: durationMs,
+        task_id: logId,
+        content_id: contentId,
+        status: 'processing',
+        message: 'HeyGen 영상 생성이 시작되었습니다. 상태를 폴링하세요.',
       },
     } satisfies ApiResponse);
   } catch (error) {
-    const durationMs = Date.now() - startTime;
     const msg = error instanceof Error ? error.message : 'Unknown error';
-
-    if (contentId) {
-      run(
-        `INSERT INTO generation_logs (content_id, step, status, error_message, duration_ms) VALUES (?, 'heygen', 'failed', ?, ?)`,
-        [contentId, msg, durationMs]
-      );
-    }
 
     return Response.json(
       { success: false, error: msg } satisfies ApiResponse,

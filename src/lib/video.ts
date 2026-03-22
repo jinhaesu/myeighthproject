@@ -6,6 +6,7 @@ import OpenAI from 'openai';
 import { generateKlingVideo } from './kling';
 import { generateAIVideo } from './runway';
 import { generateSoraVideo } from './sora';
+import { run as dbRun } from './db';
 import type { VideoEngine } from '@/types';
 
 const execFileAsync = promisify(execFile);
@@ -50,6 +51,28 @@ function getDefaultFontPath(): string {
 }
 
 const DEFAULT_FONT_PATH = getDefaultFontPath();
+
+// ─── Progress Reporting ──────────────────────────────────────────────────────
+
+function updateVideoProgress(contentId: number, currentSection: number, totalSections: number, message: string): void {
+  try {
+    // Update the latest 'started' video generation_log for this content
+    dbRun(
+      `UPDATE generation_logs SET output_result = ?
+       WHERE id = (SELECT id FROM generation_logs WHERE content_id = ? AND step = 'video' AND status = 'started' ORDER BY id DESC LIMIT 1)`,
+      [
+        JSON.stringify({
+          current_section: currentSection,
+          total_sections: totalSections,
+          message,
+        }),
+        contentId,
+      ]
+    );
+  } catch {
+    // best-effort progress update
+  }
+}
 
 // ─── OpenAI Client ─────────────────────────────────────────────────────────
 
@@ -291,6 +314,7 @@ async function generateSlideshowVideo(
 
   if (generateImages) {
     console.log(`[Video] Generating DALL-E images for ${limitedSections.length} sections...`);
+    updateVideoProgress(contentId, 0, limitedSections.length, `DALL-E 이미지 생성 중... (${limitedSections.length}장)`);
     sectionImageResults = await generateSectionImages(limitedSections, contentId);
   } else {
     sectionImageResults = limitedSections.map(() => null);
@@ -312,6 +336,14 @@ async function generateSlideshowVideo(
     let clipGenerated = false;
 
     console.log(`[Video] Section ${i}: imageResult=${imageResult ? 'OK' : 'NULL'}, imageUrl=${imageResult?.imageUrl ? 'YES' : 'NO'}, engine=${engineLabel}`);
+
+    // Update progress for polling
+    updateVideoProgress(
+      contentId,
+      i + 1,
+      limitedSections.length,
+      `${engineLabel} 클립 ${i + 1}/${limitedSections.length} 생성 중...`
+    );
 
     // Try AI video generation if we have API keys and (optionally) an image URL
     if (hasEngineKey) {
@@ -366,6 +398,14 @@ async function generateSlideshowVideo(
 
   const clipCount = clipPaths.length;
   console.log(`[Video] All ${clipCount} sections generated as ${engineLabel} video clips`);
+
+  // Update progress: merging
+  updateVideoProgress(
+    contentId,
+    limitedSections.length,
+    limitedSections.length,
+    '클립 병합 및 최종 영상 생성 중...'
+  );
 
   // Step 3: Build ffmpeg command to concat clips + audio + subtitles
   const args: string[] = ['-y'];

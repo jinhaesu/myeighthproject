@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
@@ -86,6 +86,9 @@ export default function CreatePage() {
   const [avatars, setAvatars] = useState<AvatarInfo[]>([]);
   const [selectedAvatarId, setSelectedAvatarId] = useState<string>(DEFAULT_AVATAR_ID);
   const [avatarsLoading, setAvatarsLoading] = useState(false);
+  const [videoProgressMessage, setVideoProgressMessage] = useState<string | null>(null);
+  const [videoProgressPercent, setVideoProgressPercent] = useState(0);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Step 4 state
   const [platformAccounts, setPlatformAccounts] = useState<PlatformAccount[]>([]);
@@ -203,24 +206,38 @@ export default function CreatePage() {
     }
   }
 
-  // Step 3: Generate video
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // Step 3: Generate video (async with polling)
   async function handleGenerateVideo() {
     if (!contentId) return;
     setError(null);
     setLoading(true);
+    setVideoProgressMessage('영상 생성을 시작하는 중...');
+    setVideoProgressPercent(0);
+
     try {
-      if (videoType === 'heygen') {
-        // HeyGen AI avatar video
-        const res = await apiPost<{ videoPath: string }>('/api/generate/heygen', {
+      const isHeygen = videoType === 'heygen';
+      const statusUrl = isHeygen
+        ? `/api/generate/heygen/status?content_id=${contentId}`
+        : `/api/generate/video/status?content_id=${contentId}`;
+
+      if (isHeygen) {
+        // HeyGen AI avatar video - fire async request
+        await apiPost('/api/generate/heygen', {
           content_id: contentId,
           avatar_id: selectedAvatarId,
         });
-        if (res.data) {
-          setVideoPath(res.data.videoPath);
-        }
       } else {
-        // Slideshow (DALL-E + AI Engine) - pass edited sections
-        const res = await apiPost<{ videoPath: string }>('/api/generate/video', {
+        // Slideshow (DALL-E + AI Engine) - fire async request
+        await apiPost('/api/generate/video', {
           content_id: contentId,
           video_engine: videoEngine,
           sections: scriptSections.length > 0
@@ -231,13 +248,63 @@ export default function CreatePage() {
               }))
             : undefined,
         });
-        if (res.data) {
-          setVideoPath(res.data.videoPath);
-        }
       }
+
+      // Start polling for status
+      pollIntervalRef.current = setInterval(async () => {
+        try {
+          const statusRes = await apiGet<{
+            status: 'processing' | 'completed' | 'failed';
+            progress: string | null;
+            current_section: number | null;
+            total_sections: number | null;
+            video_path: string | null;
+            error: string | null;
+          }>(statusUrl);
+
+          if (statusRes.data) {
+            const { status, progress, current_section, total_sections, video_path, error: taskError } = statusRes.data;
+
+            if (status === 'completed') {
+              // Stop polling
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
+              if (video_path) {
+                setVideoPath(video_path);
+              }
+              setVideoProgressMessage(null);
+              setVideoProgressPercent(100);
+              setLoading(false);
+            } else if (status === 'failed') {
+              // Stop polling
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
+              setError(taskError || '영상 생성 실패');
+              setVideoProgressMessage(null);
+              setVideoProgressPercent(0);
+              setLoading(false);
+            } else {
+              // Still processing - update progress
+              if (progress) {
+                setVideoProgressMessage(progress);
+              }
+              if (current_section != null && total_sections != null && total_sections > 0) {
+                setVideoProgressPercent(Math.round((current_section / total_sections) * 100));
+              }
+            }
+          }
+        } catch {
+          // Polling error - don't stop, just retry next interval
+          console.warn('[Video] Status polling error, will retry...');
+        }
+      }, 5000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '영상 생성 실패');
-    } finally {
+      setError(err instanceof Error ? err.message : '영상 생성 요청 실패');
+      setVideoProgressMessage(null);
       setLoading(false);
     }
   }
@@ -910,29 +977,46 @@ export default function CreatePage() {
               )}
 
               {/* Generate Button */}
-              <div className="text-center pt-2">
-                <Button onClick={handleGenerateVideo} disabled={loading} size="lg">
-                  {loading ? (
+              <div className="space-y-4 pt-2">
+                {loading && videoProgressMessage && (
+                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3 animate-fade-in">
                     <div className="flex items-center gap-3">
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>
-                        {videoType === 'heygen'
-                          ? 'AI 아바타가 영상을 생성하고 있습니다... (약 2~3분 소요)'
-                          : `${videoEngine === 'runway' ? 'Runway' : videoEngine === 'sora' ? 'Sora' : 'Kling'} 엔진으로 영상을 생성하고 있습니다... (섹션당 약 30초~2분 소요)`}
-                      </span>
+                      <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                      <p className="text-sm text-blue-700 font-medium">
+                        AI가 영상을 생성하고 있습니다...
+                      </p>
                     </div>
-                  ) : (
-                    <>
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      {videoType === 'heygen'
-                        ? 'AI 아바타 영상 생성 (HeyGen)'
-                        : `AI 영상 생성 (${videoEngine === 'runway' ? 'Runway' : videoEngine === 'sora' ? 'Sora' : 'Kling'} + DALL-E)`}
-                    </>
-                  )}
-                </Button>
+                    <p className="text-xs text-blue-600 pl-8">
+                      {videoProgressMessage}
+                    </p>
+                    <div className="pl-8">
+                      <ProgressBar value={videoProgressPercent} />
+                    </div>
+                    <p className="text-xs text-[#6b7280] pl-8">
+                      페이지를 닫지 마세요. 서버에서 영상을 생성 중입니다. (타임아웃 없음)
+                    </p>
+                  </div>
+                )}
+                <div className="text-center">
+                  <Button onClick={handleGenerateVideo} disabled={loading} size="lg">
+                    {loading ? (
+                      <div className="flex items-center gap-3">
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>영상 생성 중...</span>
+                      </div>
+                    ) : (
+                      <>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        {videoType === 'heygen'
+                          ? 'AI 아바타 영상 생성 (HeyGen)'
+                          : `AI 영상 생성 (${videoEngine === 'runway' ? 'Runway' : videoEngine === 'sora' ? 'Sora' : 'Kling'} + DALL-E)`}
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
             </div>
           ) : (
