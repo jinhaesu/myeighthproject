@@ -4,6 +4,9 @@ import fs from 'fs';
 import { promisify } from 'util';
 import OpenAI from 'openai';
 import { generateKlingVideo } from './kling';
+import { generateAIVideo } from './runway';
+import { generateSoraVideo } from './sora';
+import type { VideoEngine } from '@/types';
 
 const execFileAsync = promisify(execFile);
 
@@ -189,6 +192,7 @@ export async function generateVideo(
   options: VideoOptions & {
     sections?: SectionInput[];
     generateImages?: boolean;
+    videoEngine?: VideoEngine;
   } = {}
 ): Promise<VideoResult> {
   const {
@@ -199,6 +203,7 @@ export async function generateVideo(
     height = DEFAULT_HEIGHT,
     sections,
     generateImages = true,
+    videoEngine = 'kling',
   } = options;
 
   const isProduction = process.env.NODE_ENV === 'production';
@@ -235,6 +240,7 @@ export async function generateVideo(
       height,
       generateImages,
       videoPath,
+      videoEngine,
     });
   }
 
@@ -263,9 +269,10 @@ async function generateSlideshowVideo(
     height: number;
     generateImages: boolean;
     videoPath: string;
+    videoEngine: VideoEngine;
   },
 ): Promise<VideoResult> {
-  const { backgroundColor, fontSize, width, height, generateImages, videoPath } = opts;
+  const { backgroundColor, fontSize, width, height, generateImages, videoPath, videoEngine } = opts;
 
   const isProduction = process.env.NODE_ENV === 'production';
   const outBase = isProduction ? '/tmp' : process.cwd();
@@ -289,40 +296,44 @@ async function generateSlideshowVideo(
     sectionImageResults = limitedSections.map(() => null);
   }
 
-  // Step 2: Convert each DALL-E image to a Kling AI video clip (with fallback)
-  const hasKlingKey = !!(process.env.KLING_ACCESS_KEY && process.env.KLING_SECRET_KEY);
+  // Step 2: Convert each DALL-E image to an AI video clip using selected engine
+  const engineLabel = videoEngine === 'runway' ? 'Runway' : videoEngine === 'sora' ? 'Sora' : 'Kling';
+
+  // Check engine-specific API keys
+  const hasEngineKey = checkEngineKeys(videoEngine);
   const clipPaths: string[] = [];
-  // Track which sections used static image fallback (need -loop 1 -t in ffmpeg)
   const isStaticImage: boolean[] = [];
 
-  console.log(`[Video] Kling API key check: KLING_ACCESS_KEY=${hasKlingKey ? 'SET' : 'MISSING'}, KLING_SECRET_KEY=${process.env.KLING_SECRET_KEY ? 'SET' : 'MISSING'}`);
+  console.log(`[Video] Engine: ${engineLabel}, API key check: ${hasEngineKey ? 'SET' : 'MISSING'}`);
 
   for (let i = 0; i < limitedSections.length; i++) {
     const imageResult = sectionImageResults[i];
     const clipPath = path.join(clipDir, `${contentId}_clip_${i}.mp4`);
     let clipGenerated = false;
 
-    console.log(`[Video] Section ${i}: imageResult=${imageResult ? 'OK' : 'NULL'}, imageUrl=${imageResult?.imageUrl ? 'YES' : 'NO'}, hasKlingKey=${hasKlingKey}`);
+    console.log(`[Video] Section ${i}: imageResult=${imageResult ? 'OK' : 'NULL'}, imageUrl=${imageResult?.imageUrl ? 'YES' : 'NO'}, engine=${engineLabel}`);
 
-    // Try Kling image-to-video if we have an image URL and API keys
-    if (hasKlingKey && imageResult?.imageUrl) {
+    // Try AI video generation if we have API keys and (optionally) an image URL
+    if (hasEngineKey) {
       try {
-        // Use visual_prompt for Kling if available, otherwise fallback to body-based prompt
-        const klingPrompt = limitedSections[i].visual_prompt
+        const visualPrompt = limitedSections[i].visual_prompt
           ? `Smooth cinematic motion, gentle camera movement. ${limitedSections[i].visual_prompt}`
           : `Smooth cinematic motion, gentle camera movement, warm lighting. ${limitedSections[i].body.slice(0, 150).replace(/\n/g, ' ').trim()}`;
 
-        console.log(`[Video] [Kling] Starting clip ${i + 1}/${limitedSections.length} with prompt: "${klingPrompt.slice(0, 100)}..."`);
-        console.log(`[Video] [Kling] Image URL: ${imageResult.imageUrl.slice(0, 80)}...`);
-        console.log(`[Video] [Kling] Output path: ${clipPath}`);
+        console.log(`[Video] [${engineLabel}] Starting clip ${i + 1}/${limitedSections.length} with prompt: "${visualPrompt.slice(0, 100)}..."`);
+        if (imageResult?.imageUrl) {
+          console.log(`[Video] [${engineLabel}] Image URL: ${imageResult.imageUrl.slice(0, 80)}...`);
+        }
+        console.log(`[Video] [${engineLabel}] Output path: ${clipPath}`);
 
         const startTime = Date.now();
-        await generateKlingVideo({
-          prompt: klingPrompt,
-          imageUrl: imageResult.imageUrl,
-          duration: '5',
+
+        await generateVideoClip(videoEngine, {
+          prompt: visualPrompt,
+          imageUrl: imageResult?.imageUrl,
           outputPath: clipPath,
         });
+
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
         if (fs.existsSync(clipPath) && fs.statSync(clipPath).size > 0) {
@@ -330,33 +341,31 @@ async function generateSlideshowVideo(
           clipPaths.push(clipPath);
           isStaticImage.push(false);
           clipGenerated = true;
-          console.log(`[Video] [Kling] Clip ${i + 1} generated successfully (${fileSize}MB, ${elapsed}s)`);
+          console.log(`[Video] [${engineLabel}] Clip ${i + 1} generated successfully (${fileSize}MB, ${elapsed}s)`);
         } else {
-          console.warn(`[Video] [Kling] Clip ${i + 1} file missing or empty after generation (${elapsed}s)`);
+          console.warn(`[Video] [${engineLabel}] Clip ${i + 1} file missing or empty after generation (${elapsed}s)`);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         const stack = err instanceof Error ? err.stack : '';
-        console.warn(`[Video] [Kling] FAILED for section ${i}: ${msg}`);
-        if (stack) console.warn(`[Video] [Kling] Stack: ${stack}`);
+        console.warn(`[Video] [${engineLabel}] FAILED for section ${i}: ${msg}`);
+        if (stack) console.warn(`[Video] [${engineLabel}] Stack: ${stack}`);
       }
     } else {
-      const reason = !hasKlingKey ? 'Kling API keys not configured' : 'No image URL available';
-      console.log(`[Video] Skipping Kling for section ${i}: ${reason}`);
+      console.log(`[Video] Skipping ${engineLabel} for section ${i}: API keys not configured`);
     }
 
-    // NO FALLBACK: Kling must succeed. Static images are not acceptable.
+    // NO FALLBACK: Engine must succeed. Static images are not acceptable.
     if (!clipGenerated) {
-      const reason = !hasKlingKey
-        ? 'Kling API 키가 설정되지 않았습니다 (KLING_ACCESS_KEY, KLING_SECRET_KEY)'
-        : 'Kling 영상 생성에 실패했습니다. Kling 계정 잔액을 확인해주세요.';
+      const reason = !hasEngineKey
+        ? getEngineMissingKeyMessage(videoEngine)
+        : `${engineLabel} 영상 생성에 실패했습니다.`;
       throw new Error(`영상 생성 실패 (섹션 ${i + 1}): ${reason}`);
     }
   }
 
-  // All sections must be Kling video clips
-  const klingCount = clipPaths.length;
-  console.log(`[Video] All ${klingCount} sections generated as Kling video clips`);
+  const clipCount = clipPaths.length;
+  console.log(`[Video] All ${clipCount} sections generated as ${engineLabel} video clips`);
 
   // Step 3: Build ffmpeg command to concat clips + audio + subtitles
   const args: string[] = ['-y'];
@@ -552,6 +561,71 @@ async function generateLegacyVideo(
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     throw new Error(`Video generation failed: ${msg}`);
+  }
+}
+
+// ─── Engine Helpers ─────────────────────────────────────────────────────────
+
+function checkEngineKeys(engine: VideoEngine): boolean {
+  switch (engine) {
+    case 'kling':
+      return !!(process.env.KLING_ACCESS_KEY && process.env.KLING_SECRET_KEY);
+    case 'runway':
+      return !!process.env.RUNWAY_API_KEY;
+    case 'sora':
+      return !!(process.env.OPENAI_API_KEY || process.env.REPLICATE_API_TOKEN);
+    default:
+      return false;
+  }
+}
+
+function getEngineMissingKeyMessage(engine: VideoEngine): string {
+  switch (engine) {
+    case 'kling':
+      return 'Kling API 키가 설정되지 않았습니다 (KLING_ACCESS_KEY, KLING_SECRET_KEY)';
+    case 'runway':
+      return 'Runway API 키가 설정되지 않았습니다 (RUNWAY_API_KEY)';
+    case 'sora':
+      return 'Sora API 키가 설정되지 않았습니다 (OPENAI_API_KEY 또는 REPLICATE_API_TOKEN)';
+    default:
+      return 'API 키가 설정되지 않았습니다';
+  }
+}
+
+async function generateVideoClip(
+  engine: VideoEngine,
+  params: { prompt: string; imageUrl?: string; outputPath: string },
+): Promise<void> {
+  switch (engine) {
+    case 'kling':
+      await generateKlingVideo({
+        prompt: params.prompt,
+        imageUrl: params.imageUrl,
+        duration: '5',
+        outputPath: params.outputPath,
+      });
+      break;
+
+    case 'runway':
+      await generateAIVideo({
+        prompt: params.prompt,
+        imageUrl: params.imageUrl,
+        duration: 5,
+        outputPath: params.outputPath,
+      });
+      break;
+
+    case 'sora':
+      await generateSoraVideo({
+        prompt: params.prompt,
+        imageUrl: params.imageUrl,
+        duration: 5,
+        outputPath: params.outputPath,
+      });
+      break;
+
+    default:
+      throw new Error(`Unknown video engine: ${engine}`);
   }
 }
 

@@ -18,6 +18,7 @@ import type {
   ScriptSection,
   ApiResponse,
   VideoType,
+  VideoEngine,
 } from '@/types';
 
 // ─── Helper: row types ──────────────────────────────────────────────────────
@@ -351,6 +352,7 @@ export async function POST(request: Request) {
     // ─── Step 6: Generate Video ─────────────────────────────────────────
     // Determine video type: 'heygen' (default/recommended) or 'slideshow'
     const videoType: VideoType = body.video_type || 'heygen';
+    const videoEngine: VideoEngine = body.video_engine || 'kling';
     const useHeyGen = videoType === 'heygen' && !!process.env.HEYGEN_API_KEY;
 
     const step6Start = Date.now();
@@ -413,7 +415,7 @@ export async function POST(request: Request) {
           },
         });
       } else {
-        // ─── Slideshow Video (DALL-E + Kling) ──────────────────────────
+        // ─── Slideshow Video (DALL-E + AI Engine) ───────────────────────
         if (!content?.audio_path) throw new Error('No audio found');
 
         run(
@@ -421,7 +423,7 @@ export async function POST(request: Request) {
           [contentId]
         );
 
-        // Prepare sections for slideshow (include visual_prompt for DALL-E/Kling)
+        // Prepare sections for slideshow (include visual_prompt for DALL-E/Engine)
         let videoSections: Array<{ body: string; visual_prompt?: string; duration_seconds: number }> | undefined;
 
         if (scriptSections.length > 0) {
@@ -432,11 +434,12 @@ export async function POST(request: Request) {
           }));
         }
 
-        // Generate video with integrated DALL-E slideshow
+        // Generate video with integrated DALL-E slideshow + selected engine
         const videoResult = await generateVideo(contentId, content.audio_path, content.subtitle_path, {
           backgroundImage: content.thumbnail_path || undefined,
           sections: videoSections,
           generateImages: true, // Always generate images for slideshow in pipeline
+          videoEngine,
         });
         const step6Duration = Date.now() - step6Start;
 
@@ -506,6 +509,7 @@ export async function POST(request: Request) {
               backgroundImage: content.thumbnail_path || undefined,
               sections: videoSections,
               generateImages: true,
+              videoEngine,
             });
             const fallbackDuration = Date.now() - fallbackStart;
 

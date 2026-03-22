@@ -17,6 +17,7 @@ import type {
   PipelineStepResult,
   PlanItem,
   VideoType,
+  VideoEngine,
 } from '@/types';
 
 // ─── Avatar Types ───────────────────────────────────────────────────────────
@@ -137,6 +138,7 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
   const [autoCaption, setAutoCaption] = useState(true);
   const [premiumMode, setPremiumMode] = useState(false);
   const [videoType, setVideoType] = useState<VideoType>('heygen');
+  const [videoEngine, setVideoEngine] = useState<VideoEngine>('kling');
 
   const [avatars, setAvatars] = useState<AvatarInfo[]>([]);
   const [selectedAvatarId, setSelectedAvatarId] = useState<string>(DEFAULT_AVATAR_ID);
@@ -205,6 +207,7 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
         auto_caption: autoCaption,
         premium_mode: premiumMode,
         video_type: videoType,
+        video_engine: videoType === 'slideshow' ? videoEngine : undefined,
         avatar_id: videoType === 'heygen' ? selectedAvatarId : undefined,
       });
 
@@ -230,6 +233,7 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
     setError(null);
     setTopic('');
     setVideoType('heygen');
+    setVideoEngine('kling');
   }
 
   return (
@@ -495,13 +499,59 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
                     <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                     </svg>
-                    <span className="text-sm font-medium text-[#1a1a2e]">AI 영상 (Kling + DALL-E)</span>
+                    <span className="text-sm font-medium text-[#1a1a2e]">AI 영상 (DALL-E + AI 엔진)</span>
                   </div>
                   <p className="text-xs text-gray-500 mt-0.5">섹션별 AI 영상 클립 생성</p>
                 </div>
               </label>
             </div>
           </div>
+
+          {/* Video Engine Selection (slideshow only) */}
+          {videoType === 'slideshow' && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-[#1a1a2e]">영상 생성 엔진</span>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { value: 'kling' as const, label: 'Kling AI', badge: '추천', desc: '자연스러운 동작' },
+                  { value: 'runway' as const, label: 'Runway Gen-4', badge: null, desc: '빠른 생성' },
+                  { value: 'sora' as const, label: 'Sora (OpenAI)', badge: null, desc: '최신 모델' },
+                ]).map((engine) => (
+                  <label
+                    key={engine.value}
+                    className={cn(
+                      'flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-all text-sm',
+                      videoEngine === engine.value
+                        ? 'border-[#1a5c2e] bg-[#e8f5e9] shadow-sm'
+                        : 'border-gray-200 hover:border-gray-300',
+                      running && 'opacity-50 cursor-not-allowed'
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="video-engine"
+                      value={engine.value}
+                      checked={videoEngine === engine.value}
+                      onChange={() => setVideoEngine(engine.value)}
+                      disabled={running}
+                      className="accent-[#1a5c2e]"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1">
+                        <span className="font-medium text-[#1a1a2e] truncate">{engine.label}</span>
+                        {engine.badge && (
+                          <span className="text-[10px] font-bold bg-[#1a5c2e] text-white px-1.5 py-0.5 rounded-full shrink-0">
+                            {engine.badge}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500 truncate">{engine.desc}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Avatar Selection (HeyGen only) */}
           {videoType === 'heygen' && avatars.length > 0 && (

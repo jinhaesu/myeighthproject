@@ -9,7 +9,7 @@ import TextArea from '@/components/ui/TextArea';
 import ProgressBar from '@/components/ui/ProgressBar';
 import { apiGet, apiPost, apiPatch, getFileUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import type { Content, ContentType, Language, PlatformAccount, Platform, ScriptSection } from '@/types';
+import type { Content, ContentType, Language, PlatformAccount, Platform, ScriptSection, VideoEngine } from '@/types';
 
 // ─── Avatar Types ───────────────────────────────────────────────────────────
 
@@ -81,6 +81,7 @@ export default function CreatePage() {
 
   // Step 3 state
   const [videoType, setVideoType] = useState<'slideshow' | 'heygen'>('heygen');
+  const [videoEngine, setVideoEngine] = useState<VideoEngine>('kling');
   const [videoPath, setVideoPath] = useState<string | null>(null);
   const [avatars, setAvatars] = useState<AvatarInfo[]>([]);
   const [selectedAvatarId, setSelectedAvatarId] = useState<string>(DEFAULT_AVATAR_ID);
@@ -218,9 +219,10 @@ export default function CreatePage() {
           setVideoPath(res.data.videoPath);
         }
       } else {
-        // Slideshow (DALL-E + Kling) - pass edited sections
+        // Slideshow (DALL-E + AI Engine) - pass edited sections
         const res = await apiPost<{ videoPath: string }>('/api/generate/video', {
           content_id: contentId,
+          video_engine: videoEngine,
           sections: scriptSections.length > 0
             ? scriptSections.map(s => ({
                 body: s.body,
@@ -768,14 +770,64 @@ export default function CreatePage() {
                       'font-semibold',
                       videoType === 'slideshow' ? 'text-[#1a5c2e]' : 'text-[#111827]'
                     )}>
-                      AI 영상 (Kling + DALL-E)
+                      AI 영상 (DALL-E + AI 엔진)
                     </span>
                   </div>
                   <p className="text-xs text-[#6b7280]">
-                    섹션별 고품질 AI 영상 + 립싱크로 합성합니다
+                    섹션별 고품질 AI 영상 클립을 생성합니다
                   </p>
                 </label>
               </div>
+
+              {/* Video Engine Selection (slideshow only) */}
+              {videoType === 'slideshow' && (
+                <div className="space-y-2">
+                  <span className="text-sm font-medium text-[#111827]">영상 생성 엔진</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {([
+                      { value: 'kling' as const, label: 'Kling AI', badge: '추천', desc: '자연스러운 동작, 고품질' },
+                      { value: 'runway' as const, label: 'Runway Gen-4', badge: null, desc: '빠른 생성, 안정적' },
+                      { value: 'sora' as const, label: 'Sora (OpenAI)', badge: null, desc: '최신 모델' },
+                    ]).map((engine) => (
+                      <label
+                        key={engine.value}
+                        className={cn(
+                          'relative flex flex-col rounded-lg border-2 p-3 cursor-pointer transition-all duration-200',
+                          videoEngine === engine.value
+                            ? 'border-[#1a5c2e] bg-green-50 shadow-sm'
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name="video-engine"
+                          value={engine.value}
+                          checked={videoEngine === engine.value}
+                          onChange={() => setVideoEngine(engine.value)}
+                          className="sr-only"
+                        />
+                        <div className="flex items-center gap-2">
+                          <svg className={cn('w-4 h-4', videoEngine === engine.value ? 'text-[#1a5c2e]' : 'text-gray-400')} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                          <span className={cn(
+                            'text-sm font-semibold',
+                            videoEngine === engine.value ? 'text-[#1a5c2e]' : 'text-[#111827]'
+                          )}>
+                            {engine.label}
+                          </span>
+                          {engine.badge && (
+                            <span className="text-[10px] font-bold bg-[#1a5c2e] text-white px-1.5 py-0.5 rounded-full">
+                              {engine.badge}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-[#6b7280] mt-1 ml-6">{engine.desc}</p>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Avatar Selection (HeyGen only) */}
               {videoType === 'heygen' && (
@@ -866,7 +918,7 @@ export default function CreatePage() {
                       <span>
                         {videoType === 'heygen'
                           ? 'AI 아바타가 영상을 생성하고 있습니다... (약 2~3분 소요)'
-                          : 'AI가 영상을 생성하고 있습니다... (섹션당 약 30초 소요)'}
+                          : `${videoEngine === 'runway' ? 'Runway' : videoEngine === 'sora' ? 'Sora' : 'Kling'} 엔진으로 영상을 생성하고 있습니다... (섹션당 약 30초~2분 소요)`}
                       </span>
                     </div>
                   ) : (
@@ -875,7 +927,9 @@ export default function CreatePage() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
-                      {videoType === 'heygen' ? 'AI 아바타 영상 생성 (HeyGen)' : 'AI 영상 생성 (Kling + DALL-E)'}
+                      {videoType === 'heygen'
+                        ? 'AI 아바타 영상 생성 (HeyGen)'
+                        : `AI 영상 생성 (${videoEngine === 'runway' ? 'Runway' : videoEngine === 'sora' ? 'Sora' : 'Kling'} + DALL-E)`}
                     </>
                   )}
                 </Button>

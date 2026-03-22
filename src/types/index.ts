@@ -132,6 +132,7 @@ export interface GenerateVideoRequest {
   background_image?: string;
   font_size?: number;
   generate_images?: boolean;        // Generate DALL-E images for sections (default true)
+  video_engine?: VideoEngine;       // 'kling' | 'runway' | 'sora' (default: kling)
   sections?: Array<{ body: string; visual_prompt?: string; duration_seconds: number }>;
 }
 
@@ -169,6 +170,7 @@ export interface CreateCalendarEventRequest {
 // ─── Pipeline Request Types ──────────────────────────────────────────────────
 
 export type VideoType = 'slideshow' | 'heygen';
+export type VideoEngine = 'kling' | 'runway' | 'sora';
 
 export interface PipelineRequest {
   content_type: ContentType;
@@ -181,7 +183,8 @@ export interface PipelineRequest {
   tts_provider?: 'elevenlabs' | 'edge-tts';
   generate_image?: boolean;      // Auto-generate thumbnail with DALL-E
   generate_bgm?: boolean;        // Auto-generate BGM with Mubert
-  video_type?: VideoType;        // 'slideshow' (DALL-E + Kling) or 'heygen' (AI avatar)
+  video_type?: VideoType;        // 'slideshow' (DALL-E + engine) or 'heygen' (AI avatar)
+  video_engine?: VideoEngine;    // 'kling' | 'runway' | 'sora' (default: kling)
   avatar_id?: string;            // HeyGen avatar ID
 }
 

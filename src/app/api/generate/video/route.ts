@@ -4,6 +4,7 @@ import type {
   GenerateVideoRequest,
   ApiResponse,
   ScriptSection,
+  VideoEngine,
 } from '@/types';
 
 interface ContentRow {
@@ -71,6 +72,7 @@ export async function POST(request: Request) {
     }
 
     const generateImages = body.generate_images !== false; // default true
+    const videoEngine: VideoEngine = body.video_engine || 'kling';
 
     // Log start
     run(
@@ -83,6 +85,7 @@ export async function POST(request: Request) {
           fontSize: body.font_size,
           sectionCount: sections?.length ?? 0,
           generateImages,
+          videoEngine,
         }),
       ]
     );
@@ -98,6 +101,7 @@ export async function POST(request: Request) {
         fontSize: body.font_size,
         sections,
         generateImages,
+        videoEngine,
       }
     );
 
