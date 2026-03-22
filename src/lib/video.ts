@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { promisify } from 'util';
 import OpenAI from 'openai';
-import { generateAIVideo } from './runway';
+import { generateKlingVideo } from './kling';
 
 const execFileAsync = promisify(execFile);
 
@@ -287,8 +287,8 @@ async function generateSlideshowVideo(
     sectionImageResults = limitedSections.map(() => null);
   }
 
-  // Step 2: Convert each DALL-E image to a Runway AI video clip (with fallback)
-  const hasRunwayKey = !!process.env.RUNWAY_API_KEY;
+  // Step 2: Convert each DALL-E image to a Kling AI video clip (with fallback)
+  const hasKlingKey = !!(process.env.KLING_ACCESS_KEY && process.env.KLING_SECRET_KEY);
   const clipPaths: string[] = [];
   // Track which sections used static image fallback (need -loop 1 -t in ffmpeg)
   const isStaticImage: boolean[] = [];
@@ -298,17 +298,17 @@ async function generateSlideshowVideo(
     const clipPath = path.join(clipDir, `${contentId}_clip_${i}.mp4`);
     let clipGenerated = false;
 
-    // Try Runway image-to-video if we have an image URL and API key
-    if (hasRunwayKey && imageResult?.imageUrl) {
+    // Try Kling image-to-video if we have an image URL and API keys
+    if (hasKlingKey && imageResult?.imageUrl) {
       try {
         const sectionBody = limitedSections[i].body.slice(0, 150).replace(/\n/g, ' ').trim();
-        const runwayPrompt = `Smooth cinematic motion, gentle camera movement, warm lighting. ${sectionBody}`;
+        const klingPrompt = `Smooth cinematic motion, gentle camera movement, warm lighting. ${sectionBody}`;
 
-        console.log(`[Video] Generating Runway AI video clip ${i + 1}/${limitedSections.length}...`);
-        await generateAIVideo({
-          prompt: runwayPrompt,
+        console.log(`[Video] Generating Kling AI video clip ${i + 1}/${limitedSections.length}...`);
+        await generateKlingVideo({
+          prompt: klingPrompt,
           imageUrl: imageResult.imageUrl,
-          duration: 5,
+          duration: '5',
           outputPath: clipPath,
         });
 
@@ -316,11 +316,11 @@ async function generateSlideshowVideo(
           clipPaths.push(clipPath);
           isStaticImage.push(false);
           clipGenerated = true;
-          console.log(`[Video] Runway clip ${i + 1} generated successfully`);
+          console.log(`[Video] Kling clip ${i + 1} generated successfully`);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[Video] Runway failed for section ${i}, falling back to static image: ${msg}`);
+        console.warn(`[Video] Kling failed for section ${i}, falling back to static image: ${msg}`);
       }
     }
 
@@ -351,7 +351,7 @@ async function generateSlideshowVideo(
       const duration = Math.max(limitedSections[i].duration_seconds || 5, 1);
       args.push('-loop', '1', '-t', String(duration), '-i', clipPaths[i]);
     } else {
-      // Video clip from Runway
+      // Video clip from Kling
       args.push('-i', clipPaths[i]);
     }
   }
@@ -560,7 +560,7 @@ function cleanupSectionAssets(contentId: number, outBase: string): void {
       }
     }
 
-    // Cleanup Runway video clips
+    // Cleanup Kling video clips
     const videoDir = path.join(outBase, 'output', 'videos');
     if (fs.existsSync(videoDir)) {
       const videoFiles = fs.readdirSync(videoDir);

@@ -1,6 +1,6 @@
 import path from 'path';
 import { queryOne, run } from '@/lib/db';
-import { generateAIVideo } from '@/lib/runway';
+import { generateKlingVideo } from '@/lib/kling';
 import type { ApiResponse } from '@/types';
 
 interface ContentRow {
@@ -17,7 +17,8 @@ export async function POST(request: Request) {
       content_id?: number;
       prompt?: string;
       image_url?: string;
-      duration?: 5 | 10;
+      duration?: '5' | '10';
+      mode?: 'std' | 'pro';
     };
 
     const contentId = body.content_id;
@@ -58,7 +59,7 @@ export async function POST(request: Request) {
     // Log start
     if (contentId) {
       run(
-        `INSERT INTO generation_logs (content_id, step, status, input_params) VALUES (?, 'ai_video', 'started', ?)`,
+        `INSERT INTO generation_logs (content_id, step, status, input_params) VALUES (?, 'kling', 'started', ?)`,
         [contentId, JSON.stringify({ prompt: prompt.slice(0, 200), duration: body.duration })]
       );
     }
@@ -67,10 +68,11 @@ export async function POST(request: Request) {
     const filename = contentId ? `ai_${contentId}.mp4` : `ai_${Date.now()}.mp4`;
     const outputPath = path.join(projectRoot, 'output', 'videos', filename);
 
-    const result = await generateAIVideo({
+    const result = await generateKlingVideo({
       prompt,
       imageUrl,
-      duration: body.duration,
+      duration: body.duration || '5',
+      mode: body.mode,
       outputPath,
     });
 
@@ -79,8 +81,8 @@ export async function POST(request: Request) {
     // Log completion
     if (contentId) {
       run(
-        `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms) VALUES (?, 'ai_video', 'completed', ?, ?)`,
-        [contentId, JSON.stringify({ videoPath: result.videoPath, durationSec: result.durationSec }), durationMs]
+        `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms) VALUES (?, 'kling', 'completed', ?, ?)`,
+        [contentId, JSON.stringify({ videoPath: result.videoPath, taskId: result.taskId, durationSec: result.durationSec }), durationMs]
       );
     }
 
@@ -88,6 +90,7 @@ export async function POST(request: Request) {
       success: true,
       data: {
         videoPath: result.videoPath,
+        taskId: result.taskId,
         durationSec: result.durationSec,
         generationTimeMs: durationMs,
       },

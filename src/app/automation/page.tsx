@@ -58,6 +58,7 @@ const STEP_LABELS: Record<string, string> = {
   bgm: 'BGM 생성 (Mubert AI)',
   video: '영상 합성',
   heygen: 'AI 아바타 영상 (HeyGen)',
+  kling: 'AI 영상 생성 (Kling)',
   caption: '캡션/해시태그 생성',
   publish_schedule: '배포 예약',
 };
@@ -494,7 +495,7 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
                     <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                     </svg>
-                    <span className="text-sm font-medium text-[#1a1a2e]">AI 영상 (Runway + DALL-E)</span>
+                    <span className="text-sm font-medium text-[#1a1a2e]">AI 영상 (Kling + DALL-E)</span>
                   </div>
                   <p className="text-xs text-gray-500 mt-0.5">섹션별 AI 영상 클립 생성</p>
                 </div>

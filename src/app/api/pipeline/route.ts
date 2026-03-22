@@ -413,7 +413,7 @@ export async function POST(request: Request) {
           },
         });
       } else {
-        // ─── Slideshow Video (DALL-E + Runway) ─────────────────────────
+        // ─── Slideshow Video (DALL-E + Kling) ──────────────────────────
         if (!content?.audio_path) throw new Error('No audio found');
 
         run(

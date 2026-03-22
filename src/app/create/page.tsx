@@ -199,7 +199,7 @@ export default function CreatePage() {
           setVideoPath(res.data.videoPath);
         }
       } else {
-        // Slideshow (DALL-E + Runway)
+        // Slideshow (DALL-E + Kling)
         const res = await apiPost<{ videoPath: string }>('/api/generate/video', {
           content_id: contentId,
         });
@@ -620,11 +620,11 @@ export default function CreatePage() {
                       'font-semibold',
                       videoType === 'slideshow' ? 'text-[#1a5c2e]' : 'text-[#111827]'
                     )}>
-                      AI 영상 (Runway + DALL-E)
+                      AI 영상 (Kling + DALL-E)
                     </span>
                   </div>
                   <p className="text-xs text-[#6b7280]">
-                    섹션별 AI 영상 클립을 생성하여 슬라이드쇼로 합성합니다
+                    섹션별 고품질 AI 영상 + 립싱크로 합성합니다
                   </p>
                 </label>
               </div>
@@ -727,7 +727,7 @@ export default function CreatePage() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
-                      {videoType === 'heygen' ? 'AI 아바타 영상 생성 (HeyGen)' : 'AI 영상 생성 (Runway + DALL-E)'}
+                      {videoType === 'heygen' ? 'AI 아바타 영상 생성 (HeyGen)' : 'AI 영상 생성 (Kling + DALL-E)'}
                     </>
                   )}
                 </Button>
