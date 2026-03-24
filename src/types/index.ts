@@ -35,10 +35,10 @@ export interface AdConfig {
 
 export interface ScriptSection {
   order: number;
-  title: string;              // 내부 참조용 (TTS에 안 읽힘)
-  body: string;               // 나레이션 대본 (TTS가 읽을 텍스트만, 태그 없이)
-  visual_prompt: string;      // 영상/이미지 생성용 프롬프트 (영어)
-  visual_description: string; // 시각 연출 설명 (한국어, 사용자 확인용)
+  title: string;               // 내부 참조용 (TTS에 안 읽힘)
+  body: string;                // 나레이션 대본 (TTS가 읽을 텍스트만, 태그 없이)
+  visual_prompt?: string;      // 영상/이미지 생성용 프롬프트 (영어) — deprecated, 통합 visual_scenario 사용 권장
+  visual_description: string;  // 시각 연출 설명 (한국어, 사용자 확인용)
   duration_seconds: number;
   shot_type?: ShotType;
 }
@@ -299,6 +299,39 @@ export interface GeneratePptRequest {
   text: string;
   preset: PptPreset;
   custom_instruction?: string;
+}
+
+// ─── Planning Template Types ─────────────────────────────────────────────────
+
+export interface PlanningTemplate {
+  id: number;
+  name: string;
+  description: string;
+  content_type: ContentType;
+  video_length: VideoLength;
+  language: Language;
+  ad_config: AdConfig | null;
+  visual_scenario: string;        // unified visual prompt for entire video
+  tone_keywords: string[];        // e.g. ["프리미엄", "미니멀", "식욕자극"]
+  series_enabled: boolean;
+  series_name: string | null;     // e.g. "널담 건강 시리즈"
+  series_prefix: string | null;   // e.g. "EP" → "EP1. 제목", "EP2. 제목"
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateTemplateRequest {
+  name: string;
+  description?: string;
+  content_type: ContentType;
+  video_length: VideoLength;
+  language?: Language;
+  ad_config?: AdConfig;
+  visual_scenario?: string;
+  tone_keywords?: string[];
+  series_enabled?: boolean;
+  series_name?: string;
+  series_prefix?: string;
 }
 
 // ─── API Response Types ─────────────────────────────────────────────────────

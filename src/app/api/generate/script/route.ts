@@ -8,6 +8,11 @@ import type {
   ApiResponse,
 } from '@/types';
 
+interface ExtendedGenerateScriptRequest extends GenerateScriptRequest {
+  visual_scenario?: string;
+  series_info?: { name: string; episode: number; prefix: string };
+}
+
 interface ContentRow {
   id: number;
   title: string;
@@ -22,7 +27,7 @@ export async function POST(request: Request) {
   let contentId: number | undefined;
 
   try {
-    const body: GenerateScriptRequest = await request.json();
+    const body: ExtendedGenerateScriptRequest = await request.json();
 
     if (!body.content_id) {
       return Response.json(
@@ -66,6 +71,8 @@ export async function POST(request: Request) {
         additionalInstructions: body.additional_instructions,
         videoLength,
         adConfig,
+        visual_scenario: body.visual_scenario,
+        seriesInfo: body.series_info,
       }
     );
 
@@ -73,13 +80,14 @@ export async function POST(request: Request) {
 
     // Update content with generated script
     run(
-      `UPDATE contents SET script = ?, sections = ?, status = 'script_ready', tags = COALESCE(tags, ?), hooks = ?, cta_options = ? WHERE id = ?`,
+      `UPDATE contents SET script = ?, sections = ?, status = 'script_ready', tags = COALESCE(tags, ?), hooks = ?, cta_options = ?, visual_scenario = ? WHERE id = ?`,
       [
         result.fullScript,
         JSON.stringify(result.sections),
         JSON.stringify(result.tags),
         result.hooks ? JSON.stringify(result.hooks) : null,
         result.ctaOptions ? JSON.stringify(result.ctaOptions) : null,
+        result.visualScenario ?? null,
         contentId,
       ]
     );
@@ -112,6 +120,7 @@ export async function POST(request: Request) {
         ctaOptions: result.ctaOptions,
         voiceoverScript: result.voiceoverScript,
         subtitles: result.subtitles,
+        visualScenario: result.visualScenario,
         generationTimeMs: durationMs,
       },
     } satisfies ApiResponse);

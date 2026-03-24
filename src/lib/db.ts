@@ -195,6 +195,44 @@ function runMigrations(db: Database.Database): void {
       // Column already exists — safe to ignore
     }
   }
+
+  // Migration: add planning_templates table
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS planning_templates (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        name            TEXT    NOT NULL,
+        description     TEXT    NOT NULL DEFAULT '',
+        content_type    TEXT    NOT NULL DEFAULT 'product_ad',
+        video_length    INTEGER NOT NULL DEFAULT 15,
+        language        TEXT    NOT NULL DEFAULT 'ko',
+        ad_config       TEXT,
+        visual_scenario TEXT    NOT NULL DEFAULT '',
+        tone_keywords   TEXT,
+        series_enabled  INTEGER NOT NULL DEFAULT 0,
+        series_name     TEXT,
+        series_prefix   TEXT,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+  } catch {
+    // Table already exists — safe to ignore
+  }
+
+  // Migration: add template_id, series_episode, visual_scenario columns to contents
+  const templateColumns: Array<[string, string]> = [
+    ['template_id', 'INTEGER'],
+    ['series_episode', 'INTEGER'],
+    ['visual_scenario', 'TEXT'],
+  ];
+  for (const [col, type] of templateColumns) {
+    try {
+      db.exec(`ALTER TABLE contents ADD COLUMN ${col} ${type}`);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+  }
 }
 
 // ─── Helper: close db (for testing / graceful shutdown) ─────────────────────
