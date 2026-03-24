@@ -9,7 +9,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS contents (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   title           TEXT    NOT NULL,
-  content_type    TEXT    NOT NULL CHECK (content_type IN ('health_info', 'recipe', 'nutrition_tip')),
+  content_type    TEXT    NOT NULL CHECK (content_type IN ('health_info', 'recipe', 'nutrition_tip', 'product_ad', 'brand_ad')),
   status          TEXT    NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'script_ready', 'audio_ready', 'video_ready', 'published')),
   language        TEXT    NOT NULL DEFAULT 'ko' CHECK (language IN ('ko', 'en')),
   script          TEXT,
@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS contents (
   scheduled_date  TEXT,          -- ISO 8601 date string
   tags            TEXT,          -- JSON array of strings
   metadata        TEXT,          -- JSON object
+  video_length    INTEGER,       -- 6, 15, 30, 60
+  ad_config       TEXT,          -- JSON: AdConfig object
+  hooks           TEXT,          -- JSON array of hook strings
+  cta_options     TEXT,          -- JSON array of CTA strings
   created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );

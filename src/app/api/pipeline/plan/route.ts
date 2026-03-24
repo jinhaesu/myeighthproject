@@ -43,6 +43,8 @@ export async function POST(request: Request) {
       health_info: '건강정보',
       recipe: '레시피',
       nutrition_tip: '영양팁',
+      product_ad: '제품 광고',
+      brand_ad: '브랜드 광고',
     };
 
     const typesKo = body.content_types.map((t) => contentTypeLabels[t] || t).join(', ');

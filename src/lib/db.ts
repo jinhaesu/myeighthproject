@@ -59,7 +59,7 @@ function initSchema(db: Database.Database): void {
       CREATE TABLE IF NOT EXISTS contents (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
-        content_type TEXT NOT NULL CHECK(content_type IN ('health_info','recipe','nutrition_tip')),
+        content_type TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','script_ready','audio_ready','video_ready','published')),
         language TEXT NOT NULL DEFAULT 'ko' CHECK(language IN ('ko','en')),
         script TEXT,
@@ -71,6 +71,10 @@ function initSchema(db: Database.Database): void {
         scheduled_date TEXT,
         tags TEXT,
         metadata TEXT,
+        video_length INTEGER,
+        ad_config TEXT,
+        hooks TEXT,
+        cta_options TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
@@ -180,6 +184,16 @@ function runMigrations(db: Database.Database): void {
     }
   } catch {
     // Migration already applied or table doesn't exist yet — safe to ignore
+  }
+
+  // Migration: add video_length, ad_config, hooks, cta_options columns to contents
+  const newColumns = ['video_length', 'ad_config', 'hooks', 'cta_options'];
+  for (const col of newColumns) {
+    try {
+      db.exec(`ALTER TABLE contents ADD COLUMN ${col} TEXT`);
+    } catch {
+      // Column already exists — safe to ignore
+    }
   }
 }
 
