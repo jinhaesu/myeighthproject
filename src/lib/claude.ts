@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { ContentType, Language, ScriptSection } from '@/types';
+import type { ContentType, Language, ScriptSection, VideoLength, AdConfig } from '@/types';
 import { buildSystemPrompt, buildUserPrompt } from './prompts';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -10,6 +10,10 @@ export interface ScriptGenerationResult {
   fullScript: string;
   tags: string[];
   totalDuration: number;
+  hooks?: string[];
+  ctaOptions?: string[];
+  voiceoverScript?: string;
+  subtitles?: string[];
 }
 
 // ─── Client ─────────────────────────────────────────────────────────────────
@@ -31,17 +35,26 @@ export async function generateScript(
     language?: Language;
     keywords?: string[];
     additionalInstructions?: string;
+    videoLength?: VideoLength;
+    adConfig?: AdConfig;
   } = {}
 ): Promise<ScriptGenerationResult> {
   const {
     language = 'ko',
     keywords = [],
     additionalInstructions,
+    videoLength = 60,
+    adConfig,
   } = options;
 
   const client = getClient();
-  const systemPrompt = buildSystemPrompt(contentType, language);
-  const userPrompt = buildUserPrompt(topic, keywords, additionalInstructions);
+  const systemPrompt = buildSystemPrompt(contentType, language, videoLength);
+  const userPrompt = buildUserPrompt(topic, {
+    keywords,
+    additionalInstructions,
+    videoLength,
+    adConfig,
+  });
 
   const message = await client.messages.create({
     model: 'claude-sonnet-4-20250514',
@@ -64,40 +77,78 @@ export async function generateScript(
   const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, rawText];
   const jsonStr = (jsonMatch[1] ?? rawText).trim();
 
-  let parsed: {
-    title: string;
-    sections: ScriptSection[];
-    total_duration_seconds?: number;
-    tags?: string[];
-  };
+  const isAdFormat = videoLength <= 30 || adConfig !== undefined;
 
+  let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(jsonStr);
   } catch {
     throw new Error(`Failed to parse Claude response as JSON: ${rawText.slice(0, 200)}`);
   }
 
-  // Validate sections
-  if (!Array.isArray(parsed.sections) || parsed.sections.length === 0) {
-    throw new Error('Claude response missing sections array');
+  if (isAdFormat) {
+    // Ad format: shot_list based
+    const shotList = parsed.shot_list as ScriptSection[] | undefined;
+    if (!Array.isArray(shotList) || shotList.length === 0) {
+      throw new Error('Claude response missing shot_list array');
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sections: ScriptSection[] = (shotList as any[]).map((shot, idx: number) => ({
+      order: shot.order || idx + 1,
+      title: shot.title || `샷 ${idx + 1}`,
+      body: shot.body || '',
+      duration_seconds: shot.duration_seconds || 2,
+      shot_type: shot.shot_type as ScriptSection['shot_type'],
+      visual_prompt: shot.visual_prompt as string | undefined,
+    }));
+
+    const voiceoverScript = (parsed.voiceover_script as string) || '';
+    const fullScript = voiceoverScript || sections
+      .sort((a, b) => a.order - b.order)
+      .map((s) => s.body)
+      .filter(Boolean)
+      .join(' ');
+
+    const totalDuration = sections.reduce(
+      (sum, s) => sum + (s.duration_seconds || 0),
+      0
+    );
+
+    return {
+      title: (parsed.title as string) || topic,
+      sections,
+      fullScript,
+      tags: (parsed.tags as string[]) || [],
+      totalDuration: (parsed.total_duration_seconds as number) || totalDuration,
+      hooks: (parsed.hooks as string[]) || [],
+      ctaOptions: (parsed.cta_options as string[]) || [],
+      voiceoverScript,
+      subtitles: (parsed.subtitles as string[]) || [],
+    };
+  } else {
+    // Content format: sections based
+    const sections = parsed.sections as ScriptSection[];
+    if (!Array.isArray(sections) || sections.length === 0) {
+      throw new Error('Claude response missing sections array');
+    }
+
+    const fullScript = sections
+      .sort((a, b) => a.order - b.order)
+      .map((s) => `[${s.title}]\n${s.body}`)
+      .join('\n\n');
+
+    const totalDuration = sections.reduce(
+      (sum, s) => sum + (s.duration_seconds || 0),
+      0
+    );
+
+    return {
+      title: (parsed.title as string) || topic,
+      sections,
+      fullScript,
+      tags: (parsed.tags as string[]) || [],
+      totalDuration: (parsed.total_duration_seconds as number) || totalDuration,
+    };
   }
-
-  // Build full script from sections
-  const fullScript = parsed.sections
-    .sort((a, b) => a.order - b.order)
-    .map((s) => `[${s.title}]\n${s.body}`)
-    .join('\n\n');
-
-  const totalDuration = parsed.sections.reduce(
-    (sum, s) => sum + (s.duration_seconds || 0),
-    0
-  );
-
-  return {
-    title: parsed.title || topic,
-    sections: parsed.sections,
-    fullScript,
-    tags: parsed.tags || [],
-    totalDuration: parsed.total_duration_seconds || totalDuration,
-  };
 }

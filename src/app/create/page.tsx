@@ -4,52 +4,212 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
-import Select from '@/components/ui/Select';
 import TextArea from '@/components/ui/TextArea';
 import ProgressBar from '@/components/ui/ProgressBar';
 import { apiGet, apiPost, getFileUrl } from '@/lib/api';
-import { cn } from '@/lib/utils';
-import type { Content, ContentType, Language, PlatformAccount, Platform } from '@/types';
+import {
+  cn,
+  contentTypeLabel,
+  contentTypeDescription,
+  videoLengthLabel,
+  videoLengthDescription,
+  shotTypeLabel,
+  shotTypeDescription,
+} from '@/lib/utils';
+import type {
+  Content,
+  ContentType,
+  Language,
+  VideoLength,
+  AdConfig,
+  AdShot,
+  ShotType,
+  ScriptSection,
+  PlatformAccount,
+  Platform,
+} from '@/types';
 
-const steps = [
-  { number: 1, label: '기본 정보' },
-  { number: 2, label: '스크립트 & 음성' },
-  { number: 3, label: '영상 생성' },
-  { number: 4, label: '배포 예약' },
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const CONTENT_TYPES: ContentType[] = ['health_info', 'recipe', 'nutrition_tip', 'product_ad', 'brand_ad'];
+const AD_TYPES: ContentType[] = ['product_ad', 'brand_ad'];
+const VIDEO_LENGTHS: VideoLength[] = [6, 15, 30, 60];
+
+const AD_CHANNELS = [
+  { value: 'instagram_reels', label: 'Instagram Reels' },
+  { value: 'tiktok', label: 'TikTok' },
+  { value: 'youtube_shorts', label: 'YouTube Shorts' },
+  { value: 'facebook', label: 'Facebook' },
 ];
 
-const platformMeta: Record<Platform, { label: string; color: string; icon: string }> = {
+const AD_CATEGORIES = [
+  { value: 'bakery', label: '베이커리' },
+  { value: 'beverage', label: '음료' },
+  { value: 'snack', label: '스낵' },
+  { value: 'supplement', label: '건강기능식품' },
+  { value: 'other', label: '기타' },
+];
+
+const PLATFORM_META: Record<Platform, { label: string; color: string; icon: string }> = {
   instagram: { label: 'Instagram', color: 'bg-purple-100 text-purple-700', icon: 'IG' },
   youtube: { label: 'YouTube', color: 'bg-red-100 text-red-700', icon: 'YT' },
   tiktok: { label: 'TikTok', color: 'bg-gray-900 text-white', icon: 'TT' },
   facebook: { label: 'Facebook', color: 'bg-blue-100 text-blue-700', icon: 'FB' },
 };
 
-const contentTypeOptions = [
-  { value: 'health_info', label: '건강정보' },
-  { value: 'recipe', label: '레시피' },
-  { value: 'nutrition_tip', label: '영양팁' },
+const SHOT_TYPE_ICONS: Record<ShotType, string> = {
+  product_closeup: '📦',
+  texture_macro: '🔍',
+  lifestyle: '🌅',
+  benefit_frame: '✨',
+  endcard: '🎯',
+};
+
+const STEPS = [
+  {
+    number: 1,
+    label: '기본 정보',
+    subtitle: '콘텐츠 유형, 영상 길이, 주제를 설정합니다',
+  },
+  {
+    number: 2,
+    label: '스크립트 & 샷리스트',
+    subtitle: 'AI가 스크립트와 촬영 구성을 생성합니다',
+  },
+  {
+    number: 3,
+    label: '영상 생성',
+    subtitle: '스크립트와 음성을 결합하여 영상을 제작합니다',
+  },
+  {
+    number: 4,
+    label: '배포 예약',
+    subtitle: '플랫폼과 일정을 선택하여 배포를 예약합니다',
+  },
 ];
 
-const languageOptions = [
-  { value: 'ko', label: '한국어' },
-  { value: 'en', label: 'English' },
-];
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function isAdType(ct: ContentType): boolean {
+  return AD_TYPES.includes(ct);
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+/** Single shot card for ad preview */
+function ShotCard({ shot, index }: { shot: AdShot | ScriptSection; index: number }) {
+  // Normalize: AdShot uses .type/.prompt, ScriptSection uses .shot_type/.visual_prompt
+  const isAdShot = 'type' in shot;
+  const shotType: ShotType | undefined = isAdShot
+    ? (shot as AdShot).type
+    : (shot as ScriptSection).shot_type;
+  const body = isAdShot ? (shot as AdShot).description : (shot as ScriptSection).body;
+  const visualPrompt = isAdShot ? (shot as AdShot).prompt : (shot as ScriptSection).visual_prompt;
+  const duration = isAdShot ? (shot as AdShot).duration : (shot as ScriptSection).duration_seconds;
+  const shotNum = isAdShot ? (shot as AdShot).shot : index + 1;
+
+  return (
+    <div className="border border-gray-200 rounded-xl p-4 bg-white hover:border-[#1a5c2e]/40 hover:shadow-sm transition-all">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2">
+          <span className="w-7 h-7 bg-[#1a5c2e] text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">
+            {shotNum}
+          </span>
+          {shotType && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-base" role="img" aria-label={shotType}>
+                {SHOT_TYPE_ICONS[shotType]}
+              </span>
+              <span className="text-xs font-semibold text-[#1a5c2e] bg-green-50 px-2 py-0.5 rounded-full">
+                {shotTypeLabel(shotType)}
+              </span>
+            </div>
+          )}
+        </div>
+        <span className="text-xs font-mono text-white bg-[#1a5c2e] px-2 py-0.5 rounded-full shrink-0">
+          {duration}s
+        </span>
+      </div>
+
+      <p className="text-sm text-[#111827] mb-2 leading-relaxed">{body}</p>
+
+      {shotType && (
+        <p className="text-xs text-[#6b7280] italic">{shotTypeDescription(shotType)}</p>
+      )}
+
+      {visualPrompt && (
+        <div className="mt-3 pt-3 border-t border-gray-100">
+          <p className="text-xs text-[#6b7280] font-medium mb-1">Visual Prompt</p>
+          <p className="text-xs text-[#374151] font-mono bg-gray-50 rounded-lg p-2 leading-relaxed">
+            {visualPrompt}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Inline text input with label */
+function FieldInput({
+  id,
+  label,
+  hint,
+  required,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & {
+  id: string;
+  label: string;
+  hint?: string;
+  required?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-sm font-medium text-[#111827]">
+        {label}
+        {required && <span className="text-red-500 ml-0.5">*</span>}
+      </label>
+      {hint && <p className="text-xs text-[#6b7280] -mt-0.5">{hint}</p>}
+      <input
+        id={id}
+        className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-[#111827] placeholder:text-gray-400 focus:border-[#1a5c2e] focus:outline-none focus:ring-2 focus:ring-[#1a5c2e]/10 transition-all"
+        {...props}
+      />
+    </div>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function CreatePage() {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(1);
 
-  // Step 1 state
+  // ── Step 1 state ──
   const [contentType, setContentType] = useState<ContentType>('health_info');
+  const [videoLength, setVideoLength] = useState<VideoLength>(60);
   const [topic, setTopic] = useState('');
   const [language, setLanguage] = useState<Language>('ko');
 
-  // Created content
+  // Ad-specific fields (raw form state, converted to AdConfig on submit)
+  const [adProductName, setAdProductName] = useState('');
+  const [adCategory, setAdCategory] = useState('bakery');
+  const [adBenefitsRaw, setAdBenefitsRaw] = useState('');
+  const [adTargetAudience, setAdTargetAudience] = useState('');
+  const [adTone, setAdTone] = useState('');
+  const [adChannels, setAdChannels] = useState<string[]>([]);
+  const [adConstraintsRaw, setAdConstraintsRaw] = useState('');
+
+  // ── Created content ──
   const [contentId, setContentId] = useState<number | null>(null);
 
-  // Step 2 state
+  // ── Step 2 state ──
   const [script, setScript] = useState('');
+  const [sections, setSections] = useState<ScriptSection[]>([]);
+  const [shots, setShots] = useState<AdShot[]>([]);
+  const [hooks, setHooks] = useState<string[]>([]);
+  const [ctaOptions, setCtaOptions] = useState<string[]>([]);
+  const [selectedHook, setSelectedHook] = useState('');
+  const [selectedCta, setSelectedCta] = useState('');
   const [scriptGenerated, setScriptGenerated] = useState(false);
   const [audioGenerated, setAudioGenerated] = useState(false);
   const [ttsProvider, setTtsProvider] = useState<'edge-tts' | 'elevenlabs'>('edge-tts');
@@ -58,35 +218,74 @@ export default function CreatePage() {
   const [bgmGenerated, setBgmGenerated] = useState(false);
   const [bgmGenerating, setBgmGenerating] = useState(false);
 
-  // Step 3 state
+  // ── Step 3 state ──
   const [videoPath, setVideoPath] = useState<string | null>(null);
 
-  // Step 4 state
+  // ── Step 4 state ──
   const [platformAccounts, setPlatformAccounts] = useState<PlatformAccount[]>([]);
   const [selectedAccounts, setSelectedAccounts] = useState<number[]>([]);
   const [publishScheduledAt, setPublishScheduledAt] = useState('');
   const [publishCaption, setPublishCaption] = useState('');
   const [publishDone, setPublishDone] = useState(false);
 
-  // Loading & error
+  // ── Loading & error ──
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const progressPercent = ((currentStep - 1) / (steps.length)) * 100;
+  const progressPercent = ((currentStep - 1) / STEPS.length) * 100;
+  const isAd = isAdType(contentType);
 
-  // Step 1: Create content and go to step 2
+  // ── Derived ad config ──
+  function buildAdConfig(): AdConfig {
+    return {
+      product_name: adProductName,
+      category: adCategory,
+      benefits: adBenefitsRaw.split(',').map((s) => s.trim()).filter(Boolean),
+      target_audience: adTargetAudience,
+      tone: adTone,
+      video_length_sec: videoLength,
+      channels: adChannels,
+      constraints: adConstraintsRaw.split(',').map((s) => s.trim()).filter(Boolean),
+    };
+  }
+
+  // ── When content type changes, adjust default video length ──
+  function handleContentTypeChange(ct: ContentType) {
+    setContentType(ct);
+    if (AD_TYPES.includes(ct)) {
+      setVideoLength(15);
+    } else {
+      setVideoLength(60);
+    }
+  }
+
+  // ── Channel checkbox toggle ──
+  function toggleChannel(ch: string) {
+    setAdChannels((prev) =>
+      prev.includes(ch) ? prev.filter((c) => c !== ch) : [...prev, ch]
+    );
+  }
+
+  // ── Step 1: Create content ──
   async function handleStep1Submit() {
     if (!topic.trim()) {
       setError('주제를 입력해주세요.');
       return;
     }
+    if (isAd && !adProductName.trim()) {
+      setError('제품명을 입력해주세요.');
+      return;
+    }
     setError(null);
     setLoading(true);
     try {
+      const adConfig = isAd ? buildAdConfig() : undefined;
       const res = await apiPost<Content>('/api/contents', {
         title: topic,
         content_type: contentType,
         language,
+        video_length: videoLength,
+        ...(adConfig ? { ad_config: adConfig } : {}),
       });
       if (res.data) {
         setContentId(res.data.id);
@@ -99,18 +298,33 @@ export default function CreatePage() {
     }
   }
 
-  // Step 2: Generate script
+  // ── Step 2: Generate script ──
   async function handleGenerateScript() {
     if (!contentId) return;
     setError(null);
     setLoading(true);
     try {
-      const res = await apiPost<{ fullScript: string }>('/api/generate/script', {
+      const adConfig = isAd ? buildAdConfig() : undefined;
+      const res = await apiPost<{
+        fullScript: string;
+        sections?: ScriptSection[];
+        shots?: AdShot[];
+        hooks?: string[];
+        cta_options?: string[];
+      }>('/api/generate/script', {
         content_id: contentId,
         topic,
+        video_length: videoLength,
+        ...(adConfig ? { ad_config: adConfig } : {}),
       });
       if (res.data) {
-        setScript(res.data.fullScript);
+        setScript(res.data.fullScript ?? '');
+        setSections(res.data.sections ?? []);
+        setShots(res.data.shots ?? []);
+        setHooks(res.data.hooks ?? []);
+        setCtaOptions(res.data.cta_options ?? []);
+        if (res.data.hooks?.length) setSelectedHook(res.data.hooks[0]);
+        if (res.data.cta_options?.length) setSelectedCta(res.data.cta_options[0]);
         setScriptGenerated(true);
       }
     } catch (err) {
@@ -120,7 +334,7 @@ export default function CreatePage() {
     }
   }
 
-  // Step 2: Generate TTS
+  // ── Step 2: Generate TTS ──
   async function handleGenerateTTS() {
     if (!contentId) return;
     setError(null);
@@ -139,7 +353,7 @@ export default function CreatePage() {
     }
   }
 
-  // Step 3: Generate video
+  // ── Step 3: Generate video ──
   async function handleGenerateVideo() {
     if (!contentId) return;
     setError(null);
@@ -158,14 +372,50 @@ export default function CreatePage() {
     }
   }
 
+  // ── Step 4: Publish ──
+  async function handlePublish() {
+    if (!contentId || selectedAccounts.length === 0 || !publishScheduledAt) return;
+    setError(null);
+    setLoading(true);
+    try {
+      if (selectedAccounts.length === 1) {
+        await apiPost('/api/publish', {
+          content_id: contentId,
+          platform_account_id: selectedAccounts[0],
+          scheduled_at: new Date(publishScheduledAt).toISOString(),
+          caption: publishCaption || undefined,
+        });
+      } else {
+        await apiPost('/api/publish', {
+          content_id: contentId,
+          platforms: selectedAccounts.map((id) => ({
+            platform_account_id: id,
+            scheduled_at: new Date(publishScheduledAt).toISOString(),
+            caption: publishCaption || undefined,
+          })),
+        });
+      }
+      setPublishDone(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '배포 예약 실패');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Render
+  // ─────────────────────────────────────────────────────────────────────────
+
   return (
     <div className="max-w-3xl mx-auto space-y-8 animate-fade-in">
-      {/* Step indicator */}
+
+      {/* ── Stepper ── */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-        <div className="flex items-center justify-between mb-6">
-          {steps.map((step, idx) => (
-            <div key={step.number} className="flex items-center">
-              <div className="flex items-center gap-2.5">
+        <div className="flex items-start justify-between mb-6 gap-2">
+          {STEPS.map((step, idx) => (
+            <div key={step.number} className="flex items-start flex-1 min-w-0">
+              <div className="flex flex-col items-center gap-1.5 shrink-0">
                 <div
                   className={cn(
                     'w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-300',
@@ -184,20 +434,36 @@ export default function CreatePage() {
                     step.number
                   )}
                 </div>
-                <span
+              </div>
+
+              <div className="ml-2 min-w-0 hidden sm:block pt-0.5">
+                <p
                   className={cn(
-                    'text-sm font-medium hidden sm:block',
+                    'text-sm font-semibold truncate',
                     currentStep >= step.number ? 'text-[#111827]' : 'text-gray-400'
                   )}
                 >
                   {step.label}
-                </span>
+                </p>
+                <p
+                  className={cn(
+                    'text-xs leading-tight mt-0.5',
+                    currentStep === step.number
+                      ? 'text-[#6b7280]'
+                      : 'text-gray-300'
+                  )}
+                >
+                  {step.subtitle}
+                </p>
               </div>
-              {idx < steps.length - 1 && (
-                <div className={cn(
-                  'w-12 md:w-20 h-[2px] mx-3 rounded-full transition-colors duration-300',
-                  currentStep > step.number ? 'bg-[#22c55e]' : 'bg-gray-100'
-                )} />
+
+              {idx < STEPS.length - 1 && (
+                <div
+                  className={cn(
+                    'flex-1 h-[2px] mx-3 mt-4 rounded-full transition-colors duration-300 shrink-0 hidden sm:block',
+                    currentStep > step.number ? 'bg-[#22c55e]' : 'bg-gray-100'
+                  )}
+                />
               )}
             </div>
           ))}
@@ -205,7 +471,7 @@ export default function CreatePage() {
         <ProgressBar value={progressPercent} />
       </div>
 
-      {/* Error */}
+      {/* ── Error Banner ── */}
       {error && (
         <div className="bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl text-sm flex items-center gap-2 animate-fade-in">
           <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -215,44 +481,248 @@ export default function CreatePage() {
         </div>
       )}
 
-      {/* Step 1: Basic Info */}
+      {/* ════════════════════════════════════════════════════════
+          STEP 1: 기본 정보 & 제품 데이터
+          ════════════════════════════════════════════════════════ */}
       {currentStep === 1 && (
-        <Card className="space-y-6 animate-fade-in">
+        <Card className="space-y-8 animate-fade-in">
           <div>
             <h2 className="text-lg font-semibold text-[#111827]">기본 정보 입력</h2>
-            <p className="text-sm text-[#6b7280] mt-1">콘텐츠의 유형과 주제를 선택해주세요</p>
+            <p className="text-sm text-[#6b7280] mt-1">
+              콘텐츠 유형과 영상 길이를 선택하고 주제를 입력해주세요
+            </p>
           </div>
 
-          <Select
-            id="content-type"
-            label="콘텐츠 유형"
-            options={contentTypeOptions}
-            value={contentType}
-            onChange={(e) => setContentType(e.target.value as ContentType)}
-          />
-
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="topic" className="text-sm font-medium text-[#111827]">
-              주제
+          {/* ── Content Type ── */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-[#111827]">
+              콘텐츠 유형 <span className="text-red-500">*</span>
             </label>
-            <input
-              id="topic"
-              type="text"
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              placeholder="예: 봄철 면역력 높이는 음식 5가지"
-              className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-[#111827] placeholder:text-gray-400 focus:border-[#1a5c2e] focus:outline-none focus:ring-2 focus:ring-[#1a5c2e]/10 transition-all"
-            />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {CONTENT_TYPES.map((ct) => {
+                const selected = contentType === ct;
+                return (
+                  <button
+                    key={ct}
+                    type="button"
+                    onClick={() => handleContentTypeChange(ct)}
+                    className={cn(
+                      'text-left rounded-xl border px-4 py-3 transition-all duration-200',
+                      selected
+                        ? 'border-[#1a5c2e] bg-green-50 shadow-sm'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-0.5">
+                      <span className={cn('text-sm font-semibold', selected ? 'text-[#1a5c2e]' : 'text-[#111827]')}>
+                        {contentTypeLabel(ct)}
+                      </span>
+                      {AD_TYPES.includes(ct) && (
+                        <span className="text-xs font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full">
+                          AD
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-[#6b7280] leading-tight">
+                      {contentTypeDescription(ct)}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          <Select
-            id="language"
-            label="언어"
-            options={languageOptions}
-            value={language}
-            onChange={(e) => setLanguage(e.target.value as Language)}
+          {/* ── Video Length ── */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-[#111827]">
+              영상 길이 <span className="text-red-500">*</span>
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {VIDEO_LENGTHS.map((vl) => {
+                const selected = videoLength === vl;
+                return (
+                  <button
+                    key={vl}
+                    type="button"
+                    onClick={() => setVideoLength(vl)}
+                    className={cn(
+                      'text-left rounded-xl border px-3 py-3 transition-all duration-200',
+                      selected
+                        ? 'border-[#1a5c2e] bg-green-50 shadow-sm'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    )}
+                  >
+                    <p className={cn('text-sm font-bold mb-1', selected ? 'text-[#1a5c2e]' : 'text-[#111827]')}>
+                      {videoLengthLabel(vl)}
+                    </p>
+                    <p className="text-xs text-[#6b7280] leading-tight">
+                      {videoLengthDescription(vl)}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── Topic ── */}
+          <FieldInput
+            id="topic"
+            label="주제"
+            required
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            placeholder={
+              isAd
+                ? '예: 출시 신제품 홍보, 시즌 한정 캠페인'
+                : '예: 봄철 면역력 높이는 음식 5가지'
+            }
+            hint="AI가 이 주제를 바탕으로 스크립트를 작성합니다"
           />
 
+          {/* ── Language ── */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-[#111827]">언어</label>
+            <div className="grid grid-cols-2 gap-2">
+              {(['ko', 'en'] as Language[]).map((lang) => (
+                <label
+                  key={lang}
+                  className={cn(
+                    'flex items-center gap-2.5 rounded-xl border px-4 py-2.5 cursor-pointer transition-all',
+                    language === lang
+                      ? 'border-[#1a5c2e] bg-green-50 shadow-sm'
+                      : 'border-gray-200 hover:border-gray-300'
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="language"
+                    value={lang}
+                    checked={language === lang}
+                    onChange={() => setLanguage(lang)}
+                    className="accent-[#1a5c2e]"
+                  />
+                  <span className="text-sm font-medium text-[#111827]">
+                    {lang === 'ko' ? '한국어' : 'English'}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Ad-specific Product Data (conditional) ── */}
+          {isAd && (
+            <div className="space-y-5 border-t border-dashed border-[#1a5c2e]/20 pt-6">
+              <div>
+                <h3 className="text-sm font-semibold text-[#1a5c2e] flex items-center gap-2">
+                  <span className="w-5 h-5 bg-[#1a5c2e] text-white rounded flex items-center justify-center text-xs">AD</span>
+                  제품 데이터
+                </h3>
+                <p className="text-xs text-[#6b7280] mt-1">
+                  광고 유형에서는 제품 정보가 필요합니다. AI가 제품의 특성에 맞는 샷 구성과 스크립트를 생성합니다.
+                </p>
+              </div>
+
+              {/* Product name + Category */}
+              <div className="grid sm:grid-cols-2 gap-4">
+                <FieldInput
+                  id="ad-product-name"
+                  label="제품명"
+                  required
+                  value={adProductName}
+                  onChange={(e) => setAdProductName(e.target.value)}
+                  placeholder="예: 그린 오트 단백질바"
+                />
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="ad-category" className="text-sm font-medium text-[#111827]">
+                    카테고리
+                  </label>
+                  <select
+                    id="ad-category"
+                    value={adCategory}
+                    onChange={(e) => setAdCategory(e.target.value)}
+                    className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-[#111827] focus:border-[#1a5c2e] focus:outline-none focus:ring-2 focus:ring-[#1a5c2e]/10 transition-all"
+                  >
+                    {AD_CATEGORIES.map((cat) => (
+                      <option key={cat.value} value={cat.value}>
+                        {cat.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Benefits */}
+              <FieldInput
+                id="ad-benefits"
+                label="제품 핵심 혜택"
+                value={adBenefitsRaw}
+                onChange={(e) => setAdBenefitsRaw(e.target.value)}
+                placeholder="예: 고단백 20g, 저당 3g, 글루텐프리"
+                hint="쉼표로 구분하여 입력하세요"
+              />
+
+              {/* Target audience */}
+              <FieldInput
+                id="ad-target"
+                label="타겟 고객"
+                value={adTargetAudience}
+                onChange={(e) => setAdTargetAudience(e.target.value)}
+                placeholder="예: 20-30대 헬스 관심 여성, 직장인"
+              />
+
+              {/* Tone */}
+              <FieldInput
+                id="ad-tone"
+                label="톤 & 무드"
+                value={adTone}
+                onChange={(e) => setAdTone(e.target.value)}
+                placeholder="예: 프리미엄, 미니멀, 식욕자극"
+                hint="광고의 전반적인 분위기를 자유롭게 입력하세요"
+              />
+
+              {/* Channels */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-[#111827]">타겟 채널</label>
+                <p className="text-xs text-[#6b7280]">광고를 배포할 플랫폼을 선택하세요 (복수 선택 가능)</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {AD_CHANNELS.map((ch) => {
+                    const checked = adChannels.includes(ch.value);
+                    return (
+                      <label
+                        key={ch.value}
+                        className={cn(
+                          'flex items-center gap-2.5 rounded-xl border px-3 py-2.5 cursor-pointer transition-all',
+                          checked
+                            ? 'border-[#1a5c2e] bg-green-50 shadow-sm'
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleChannel(ch.value)}
+                          className="accent-[#1a5c2e]"
+                        />
+                        <span className="text-sm text-[#111827]">{ch.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Constraints */}
+              <FieldInput
+                id="ad-constraints"
+                label="촬영 제약 사항"
+                value={adConstraintsRaw}
+                onChange={(e) => setAdConstraintsRaw(e.target.value)}
+                placeholder="예: 패키지 왜곡 금지, 얼굴 최소화"
+                hint="쉼표로 구분하여 입력하세요"
+              />
+            </div>
+          )}
+
+          {/* ── Next button ── */}
           <div className="flex justify-end pt-2">
             <Button onClick={handleStep1Submit} disabled={loading} size="lg">
               {loading ? (
@@ -273,14 +743,21 @@ export default function CreatePage() {
         </Card>
       )}
 
-      {/* Step 2: Script & TTS */}
+      {/* ════════════════════════════════════════════════════════
+          STEP 2: 스크립트 & 샷리스트
+          ════════════════════════════════════════════════════════ */}
       {currentStep === 2 && (
         <Card className="space-y-6 animate-fade-in">
           <div>
-            <h2 className="text-lg font-semibold text-[#111827]">스크립트 & 음성 생성</h2>
-            <p className="text-sm text-[#6b7280] mt-1">AI가 스크립트를 생성하고 음성으로 변환합니다</p>
+            <h2 className="text-lg font-semibold text-[#111827]">스크립트 & 샷리스트</h2>
+            <p className="text-sm text-[#6b7280] mt-1">
+              {isAd
+                ? 'AI가 광고 샷 구성, 훅, CTA를 포함한 스크립트를 생성합니다'
+                : 'AI가 주제에 맞는 섹션별 스크립트를 작성합니다'}
+            </p>
           </div>
 
+          {/* ── Before generation: generate button ── */}
           {!scriptGenerated ? (
             <div className="text-center py-12 space-y-5">
               <div className="w-16 h-16 bg-gradient-to-br from-[#e8f5e9] to-[#c8e6c9] rounded-2xl flex items-center justify-center mx-auto">
@@ -293,7 +770,7 @@ export default function CreatePage() {
                   스크립트를 생성할 준비가 되었습니다
                 </p>
                 <p className="text-sm text-[#6b7280]">
-                  &quot;{topic}&quot; 주제로 AI가 스크립트를 작성합니다
+                  &quot;{topic}&quot; 주제 &middot; {videoLengthLabel(videoLength)} &middot; {contentTypeLabel(contentType)}
                 </p>
               </div>
               <Button onClick={handleGenerateScript} disabled={loading} size="lg">
@@ -313,26 +790,118 @@ export default function CreatePage() {
               </Button>
             </div>
           ) : (
-            <div className="space-y-4">
-              <TextArea
-                id="script"
-                label="생성된 스크립트 (편집 가능)"
-                value={script}
-                onChange={(e) => setScript(e.target.value)}
-                className="min-h-[300px] font-mono text-sm"
-              />
+            <div className="space-y-6">
 
-              {/* Premium Options */}
-              <div className="border border-gray-200 rounded-xl p-4 space-y-4 bg-gray-50">
-                <p className="text-sm font-semibold text-[#111827]">생성 옵션</p>
+              {/* ── Shot list (for ads or short-form <=30s) ── */}
+              {(isAd || videoLength <= 30) && shots.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-[#111827]">샷 리스트</h3>
+                    <span className="text-xs text-[#6b7280] bg-gray-100 px-2 py-0.5 rounded-full">
+                      {shots.length}개 샷 &middot; 총 {shots.reduce((sum, s) => sum + s.duration, 0)}초
+                    </span>
+                  </div>
+                  <div className="grid gap-3">
+                    {shots.map((shot, idx) => (
+                      <ShotCard key={shot.shot} shot={shot} index={idx} />
+                    ))}
+                  </div>
+                </div>
+              )}
 
-                {/* TTS Provider Selection */}
+              {/* ── Section-based script (for content type or long-form) ── */}
+              {(!isAd && videoLength > 30) && sections.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-[#111827]">섹션별 구성</h3>
+                  <div className="grid gap-3">
+                    {sections.map((sec, idx) => (
+                      <ShotCard key={sec.order} shot={sec} index={idx} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Hooks (selectable cards) ── */}
+              {hooks.length > 0 && (
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-[#111827]">훅 옵션</h3>
+                    <p className="text-xs text-[#6b7280] mt-0.5">영상 첫 1-2초를 사로잡는 문장을 선택하세요</p>
+                  </div>
+                  <div className="grid gap-2">
+                    {hooks.map((hook) => (
+                      <button
+                        key={hook}
+                        type="button"
+                        onClick={() => setSelectedHook(hook)}
+                        className={cn(
+                          'text-left rounded-xl border px-4 py-3 text-sm transition-all',
+                          selectedHook === hook
+                            ? 'border-[#1a5c2e] bg-green-50 text-[#1a5c2e] font-medium shadow-sm'
+                            : 'border-gray-200 text-[#374151] hover:border-gray-300 hover:bg-gray-50'
+                        )}
+                      >
+                        <span className="text-xs text-[#6b7280] mr-1.5 font-mono">훅</span>
+                        {hook}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── CTA options (selectable pills) ── */}
+              {ctaOptions.length > 0 && (
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-[#111827]">CTA 옵션</h3>
+                    <p className="text-xs text-[#6b7280] mt-0.5">영상 마지막에 사용할 행동 유도 문구를 선택하세요</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {ctaOptions.map((cta) => (
+                      <button
+                        key={cta}
+                        type="button"
+                        onClick={() => setSelectedCta(cta)}
+                        className={cn(
+                          'rounded-full border px-4 py-1.5 text-sm transition-all',
+                          selectedCta === cta
+                            ? 'border-[#1a5c2e] bg-[#1a5c2e] text-white font-medium shadow-sm'
+                            : 'border-gray-200 text-[#374151] hover:border-[#1a5c2e]/40 hover:bg-green-50'
+                        )}
+                      >
+                        {cta}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Voiceover script textarea ── */}
+              <div className="space-y-1.5">
+                <label htmlFor="script" className="text-sm font-semibold text-[#111827]">
+                  보이스오버 스크립트
+                  <span className="text-xs text-[#6b7280] font-normal ml-2">(직접 편집 가능)</span>
+                </label>
+                <textarea
+                  id="script"
+                  value={script}
+                  onChange={(e) => setScript(e.target.value)}
+                  rows={10}
+                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-[#111827] font-mono placeholder:text-gray-400 focus:border-[#1a5c2e] focus:outline-none focus:ring-2 focus:ring-[#1a5c2e]/10 transition-all resize-none"
+                />
+              </div>
+
+              {/* ── Options panel ── */}
+              <div className="border border-gray-200 rounded-xl p-5 space-y-5 bg-gray-50">
+                <p className="text-sm font-semibold text-[#111827]">음성 & 에셋 옵션</p>
+
+                {/* TTS Provider */}
                 <div className="flex flex-col gap-1.5">
                   <span className="text-xs font-medium text-[#6b7280]">음성 엔진</span>
                   <div className="grid grid-cols-2 gap-2">
                     <label
                       className={cn(
-                        'flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-all text-sm',
+                        'flex items-center gap-2 rounded-xl border px-3 py-2.5 cursor-pointer transition-all text-sm',
                         ttsProvider === 'edge-tts'
                           ? 'border-[#1a5c2e] bg-white shadow-sm'
                           : 'border-gray-200 hover:border-gray-300'
@@ -348,12 +917,12 @@ export default function CreatePage() {
                       />
                       <div>
                         <span className="font-medium text-[#111827]">edge-tts</span>
-                        <span className="text-[#6b7280] ml-1">(무료)</span>
+                        <span className="text-[#6b7280] ml-1 text-xs">(무료)</span>
                       </div>
                     </label>
                     <label
                       className={cn(
-                        'flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-all text-sm',
+                        'flex items-center gap-2 rounded-xl border px-3 py-2.5 cursor-pointer transition-all text-sm',
                         ttsProvider === 'elevenlabs'
                           ? 'border-amber-400 bg-amber-50 shadow-sm'
                           : 'border-gray-200 hover:border-gray-300'
@@ -369,14 +938,14 @@ export default function CreatePage() {
                       />
                       <div>
                         <span className="font-medium text-[#111827]">ElevenLabs</span>
-                        <span className="text-amber-600 ml-1 text-xs font-semibold">PRO</span>
+                        <span className="text-amber-600 ml-1.5 text-xs font-bold">PRO</span>
                       </div>
                     </label>
                   </div>
                 </div>
 
-                {/* Image Generation Button */}
-                <div className="flex items-center gap-3">
+                {/* Asset generation buttons */}
+                <div className="flex flex-wrap gap-2">
                   <Button
                     variant="secondary"
                     size="sm"
@@ -434,9 +1003,10 @@ export default function CreatePage() {
                 </div>
               </div>
 
+              {/* ── Generate TTS / Proceed ── */}
               {!audioGenerated && (
-                <div className="flex justify-end">
-                  <Button onClick={handleGenerateTTS} disabled={loading}>
+                <div className="flex justify-end pt-1">
+                  <Button onClick={handleGenerateTTS} disabled={loading} size="lg">
                     {loading ? (
                       <>
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -447,7 +1017,9 @@ export default function CreatePage() {
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                         </svg>
-                        {ttsProvider === 'elevenlabs' ? '프리미엄 음성 생성 (ElevenLabs)' : '음성 생성 (edge-tts)'}
+                        {ttsProvider === 'elevenlabs'
+                          ? '프리미엄 음성 생성 (ElevenLabs)'
+                          : '음성 생성 (edge-tts)'}
                       </>
                     )}
                   </Button>
@@ -458,7 +1030,9 @@ export default function CreatePage() {
         </Card>
       )}
 
-      {/* Step 3: Video Generation */}
+      {/* ════════════════════════════════════════════════════════
+          STEP 3: 영상 생성
+          ════════════════════════════════════════════════════════ */}
       {currentStep === 3 && (
         <Card className="space-y-6 animate-fade-in">
           <div>
@@ -475,7 +1049,7 @@ export default function CreatePage() {
               </div>
               <div>
                 <p className="text-[#111827] font-medium mb-1">영상을 생성할 준비가 되었습니다</p>
-                <p className="text-sm text-[#6b7280]">스크립트와 음성을 결합하여 영상을 생성합니다</p>
+                <p className="text-sm text-[#6b7280]">스크립트와 음성을 결합하여 {videoLength}초 영상을 생성합니다</p>
               </div>
               <Button onClick={handleGenerateVideo} disabled={loading} size="lg">
                 {loading ? (
@@ -496,7 +1070,6 @@ export default function CreatePage() {
             </div>
           ) : (
             <div className="space-y-6 animate-fade-in">
-              {/* Success message */}
               <div className="bg-green-50 border border-green-100 rounded-xl p-4 flex items-center gap-3">
                 <div className="w-8 h-8 bg-[#22c55e] rounded-full flex items-center justify-center shrink-0">
                   <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -506,7 +1079,6 @@ export default function CreatePage() {
                 <p className="text-sm text-green-700 font-medium">영상이 성공적으로 생성되었습니다!</p>
               </div>
 
-              {/* Video preview */}
               <div className="bg-black rounded-2xl overflow-hidden aspect-video flex items-center justify-center">
                 <video
                   src={getFileUrl(videoPath)}
@@ -518,7 +1090,6 @@ export default function CreatePage() {
                 </video>
               </div>
 
-              {/* Actions */}
               <div className="flex items-center gap-3">
                 <a
                   href={getFileUrl(videoPath)}
@@ -540,7 +1111,7 @@ export default function CreatePage() {
                       const res = await apiGet<PlatformAccount[]>('/api/platforms');
                       if (res.data) setPlatformAccounts(res.data);
                     } catch {
-                      // silent
+                      // silent — step 4 handles empty accounts gracefully
                     }
                     setCurrentStep(4);
                   }}
@@ -556,7 +1127,9 @@ export default function CreatePage() {
         </Card>
       )}
 
-      {/* Step 4: Publish Schedule */}
+      {/* ════════════════════════════════════════════════════════
+          STEP 4: 배포 예약
+          ════════════════════════════════════════════════════════ */}
       {currentStep === 4 && (
         <Card className="space-y-6 animate-fade-in">
           <div>
@@ -602,7 +1175,7 @@ export default function CreatePage() {
                     {platformAccounts
                       .filter((a) => a.is_active)
                       .map((account) => {
-                        const pm = platformMeta[account.platform];
+                        const pm = PLATFORM_META[account.platform];
                         const checked = selectedAccounts.includes(account.id);
                         return (
                           <label
@@ -666,35 +1239,7 @@ export default function CreatePage() {
                   건너뛰기
                 </Button>
                 <Button
-                  onClick={async () => {
-                    if (!contentId || selectedAccounts.length === 0 || !publishScheduledAt) return;
-                    setError(null);
-                    setLoading(true);
-                    try {
-                      if (selectedAccounts.length === 1) {
-                        await apiPost('/api/publish', {
-                          content_id: contentId,
-                          platform_account_id: selectedAccounts[0],
-                          scheduled_at: new Date(publishScheduledAt).toISOString(),
-                          caption: publishCaption || undefined,
-                        });
-                      } else {
-                        await apiPost('/api/publish', {
-                          content_id: contentId,
-                          platforms: selectedAccounts.map((id) => ({
-                            platform_account_id: id,
-                            scheduled_at: new Date(publishScheduledAt).toISOString(),
-                            caption: publishCaption || undefined,
-                          })),
-                        });
-                      }
-                      setPublishDone(true);
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : '배포 예약 실패');
-                    } finally {
-                      setLoading(false);
-                    }
-                  }}
+                  onClick={handlePublish}
                   disabled={loading || selectedAccounts.length === 0 || !publishScheduledAt}
                 >
                   {loading ? (

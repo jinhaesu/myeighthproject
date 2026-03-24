@@ -1,8 +1,35 @@
 // ─── Enum-like Union Types ───────────────────────────────────────────────────
 
-export type ContentType = 'health_info' | 'recipe' | 'nutrition_tip';
+export type ContentType = 'health_info' | 'recipe' | 'nutrition_tip' | 'product_ad' | 'brand_ad';
 export type ContentStatus = 'draft' | 'script_ready' | 'audio_ready' | 'video_ready' | 'published';
 export type Language = 'ko' | 'en';
+export type VideoLength = 6 | 15 | 30 | 60;
+
+// ─── Shot Types (광고 샷 유형) ───────────────────────────────────────────────
+
+export type ShotType = 'product_closeup' | 'texture_macro' | 'lifestyle' | 'benefit_frame' | 'endcard';
+
+export interface AdShot {
+  shot: number;
+  duration: number;
+  type: ShotType;
+  description: string;
+  prompt: string;
+}
+
+// ─── Ad Config (광고 제작 설정) ──────────────────────────────────────────────
+
+export interface AdConfig {
+  product_name: string;
+  category: string;
+  benefits: string[];
+  target_audience: string;
+  tone: string;
+  video_length_sec: VideoLength;
+  channels: string[];
+  package_image_url?: string;
+  constraints: string[];
+}
 
 // ─── Domain Interfaces ──────────────────────────────────────────────────────
 
@@ -11,6 +38,8 @@ export interface ScriptSection {
   title: string;
   body: string;
   duration_seconds: number;
+  shot_type?: ShotType;
+  visual_prompt?: string;
 }
 
 export interface Content {
@@ -28,6 +57,10 @@ export interface Content {
   scheduled_date: string | null;
   tags: string[] | null;
   metadata: Record<string, unknown> | null;
+  video_length: VideoLength | null;
+  ad_config: AdConfig | null;
+  hooks: string[] | null;
+  cta_options: string[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -97,6 +130,8 @@ export interface CreateContentRequest {
   language?: Language;
   scheduled_date?: string;
   tags?: string[];
+  video_length?: VideoLength;
+  ad_config?: AdConfig;
 }
 
 export interface UpdateContentRequest {
@@ -109,6 +144,10 @@ export interface UpdateContentRequest {
   scheduled_date?: string;
   tags?: string[];
   metadata?: Record<string, unknown>;
+  video_length?: VideoLength;
+  ad_config?: AdConfig;
+  hooks?: string[];
+  cta_options?: string[];
 }
 
 export interface GenerateScriptRequest {
@@ -116,6 +155,8 @@ export interface GenerateScriptRequest {
   topic?: string;
   keywords?: string[];
   additional_instructions?: string;
+  video_length?: VideoLength;
+  ad_config?: AdConfig;
 }
 
 export interface GenerateTTSRequest {
@@ -177,6 +218,8 @@ export interface PipelineRequest {
   tts_provider?: 'elevenlabs' | 'edge-tts';
   generate_image?: boolean;      // Auto-generate thumbnail with DALL-E
   generate_bgm?: boolean;        // Auto-generate BGM with Mubert
+  video_length?: VideoLength;
+  ad_config?: AdConfig;
 }
 
 export interface BulkPipelineRequest {

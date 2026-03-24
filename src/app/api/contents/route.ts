@@ -23,6 +23,10 @@ interface ContentRow {
   scheduled_date: string | null;
   tags: string | null;
   metadata: string | null;
+  video_length: number | null;
+  ad_config: string | null;
+  hooks: string | null;
+  cta_options: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -33,6 +37,9 @@ function rowToContent(row: ContentRow): Content {
     sections: row.sections ? JSON.parse(row.sections) : null,
     tags: row.tags ? JSON.parse(row.tags) : null,
     metadata: row.metadata ? JSON.parse(row.metadata) : null,
+    ad_config: row.ad_config ? JSON.parse(row.ad_config) : null,
+    hooks: row.hooks ? JSON.parse(row.hooks) : null,
+    cta_options: row.cta_options ? JSON.parse(row.cta_options) : null,
   } as Content;
 }
 
@@ -105,7 +112,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const validTypes = ['health_info', 'recipe', 'nutrition_tip'];
+    const validTypes = ['health_info', 'recipe', 'nutrition_tip', 'product_ad', 'brand_ad'];
     if (!validTypes.includes(body.content_type)) {
       return Response.json(
         { success: false, error: `content_type must be one of: ${validTypes.join(', ')}` } satisfies ApiResponse,
@@ -114,14 +121,16 @@ export async function POST(request: NextRequest) {
     }
 
     const result = run(
-      `INSERT INTO contents (title, content_type, language, scheduled_date, tags)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO contents (title, content_type, language, scheduled_date, tags, video_length, ad_config)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         body.title,
         body.content_type,
         body.language || 'ko',
         body.scheduled_date || null,
         body.tags ? JSON.stringify(body.tags) : null,
+        body.video_length || null,
+        body.ad_config ? JSON.stringify(body.ad_config) : null,
       ]
     );
 
