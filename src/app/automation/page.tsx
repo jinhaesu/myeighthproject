@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Select from '@/components/ui/Select';
@@ -16,7 +16,20 @@ import type {
   PipelineResult,
   PipelineStepResult,
   PlanItem,
+  VideoType,
+  VideoEngine,
 } from '@/types';
+
+// ─── Avatar Types ───────────────────────────────────────────────────────────
+
+interface AvatarInfo {
+  id: string;
+  name: string;
+  category: 'custom' | 'professional' | 'casual' | 'diverse';
+  preview_url: string | null;
+}
+
+const DEFAULT_AVATAR_ID = '289259c61ef142ebba0bb463f35f864b';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -43,8 +56,10 @@ const STEP_LABELS: Record<string, string> = {
   script: '스크립트 생성 (AI)',
   image: '이미지 생성 (DALL-E 3)',
   tts: 'TTS 음성 생성',
-  bgm: 'BGM 생성 (설정 필요)',
+  bgm: 'BGM 생성 (Mubert AI)',
   video: '영상 합성',
+  heygen: 'AI 아바타 영상 (HeyGen)',
+  kling: 'AI 영상 생성 (Kling)',
   caption: '캡션/해시태그 생성',
   publish_schedule: '배포 예약',
 };
@@ -122,12 +137,34 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
   const [scheduledAt, setScheduledAt] = useState('');
   const [autoCaption, setAutoCaption] = useState(true);
   const [premiumMode, setPremiumMode] = useState(false);
+  const [videoType, setVideoType] = useState<VideoType>('heygen');
+  const [videoEngine, setVideoEngine] = useState<VideoEngine>('kling');
+
+  const [avatars, setAvatars] = useState<AvatarInfo[]>([]);
+  const [selectedAvatarId, setSelectedAvatarId] = useState<string>(DEFAULT_AVATAR_ID);
 
   const [running, setRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [completedSteps, setCompletedSteps] = useState<PipelineStepResult[]>([]);
   const [result, setResult] = useState<PipelineResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Load avatars
+  const loadAvatars = useCallback(async () => {
+    if (avatars.length > 0) return;
+    try {
+      const res = await apiGet<AvatarInfo[]>('/api/avatars');
+      if (res.data) setAvatars(res.data);
+    } catch {
+      // silently fail
+    }
+  }, [avatars.length]);
+
+  useEffect(() => {
+    if (videoType === 'heygen') {
+      loadAvatars();
+    }
+  }, [videoType, loadAvatars]);
 
   const progressPercent = result
     ? 100
@@ -144,24 +181,11 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
     setRunning(true);
     setResult(null);
     setCompletedSteps([]);
-
-    // Simulate step progression
-    const stepTimer = setInterval(() => {
-      setCurrentStep((prev) => {
-        const currentIdx = prev ? STEP_ORDER.indexOf(prev) : -1;
-        const nextIdx = currentIdx + 1;
-        if (nextIdx < STEP_ORDER.length) {
-          return STEP_ORDER[nextIdx];
-        }
-        return prev;
-      });
-    }, 3000);
-
-    // Start with first step
     setCurrentStep(STEP_ORDER[0]);
 
     try {
-      const res = await apiPost<PipelineResult>('/api/pipeline', {
+      // Start pipeline (returns immediately with task_id)
+      const res = await apiPost<{ task_id: number; content_id: number }>('/api/pipeline', {
         content_type: contentType,
         topic,
         language,
@@ -169,17 +193,65 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
         scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
         auto_caption: autoCaption,
         premium_mode: premiumMode,
+        video_type: videoType,
+        video_engine: videoType === 'slideshow' ? videoEngine : undefined,
+        avatar_id: videoType === 'heygen' ? selectedAvatarId : undefined,
       });
 
-      clearInterval(stepTimer);
-
-      if (res.data) {
-        setResult(res.data);
-        setCompletedSteps(res.data.steps);
-        setCurrentStep(null);
+      if (!res.data?.content_id) {
+        throw new Error('파이프라인 시작 실패: content_id를 받지 못했습니다.');
       }
+
+      const pipelineContentId = res.data.content_id;
+
+      // Poll for pipeline status
+      const pollForStatus = (): Promise<void> => {
+        return new Promise((resolve, reject) => {
+          const interval = setInterval(async () => {
+            try {
+              const statusRes = await apiGet<{
+                status: 'processing' | 'completed' | 'failed';
+                progress: string | null;
+                current_step: string | null;
+                steps_completed: number | null;
+                result: PipelineResult | null;
+                error: string | null;
+              }>(`/api/pipeline/status?content_id=${pipelineContentId}`);
+
+              if (statusRes.data) {
+                const { status, current_step, result: pipelineResult, error: taskError } = statusRes.data;
+
+                // Update current step display
+                if (current_step) {
+                  const stepIdx = STEP_ORDER.indexOf(current_step);
+                  if (stepIdx >= 0) {
+                    setCurrentStep(STEP_ORDER[stepIdx]);
+                  }
+                }
+
+                if (status === 'completed') {
+                  clearInterval(interval);
+                  if (pipelineResult) {
+                    setResult(pipelineResult);
+                    setCompletedSteps(pipelineResult.steps || []);
+                  }
+                  setCurrentStep(null);
+                  resolve();
+                } else if (status === 'failed') {
+                  clearInterval(interval);
+                  reject(new Error(taskError || '파이프라인 실행 실패'));
+                }
+              }
+            } catch {
+              // Polling error, continue
+              console.warn('[Pipeline] Status polling error, will retry...');
+            }
+          }, 5000);
+        });
+      };
+
+      await pollForStatus();
     } catch (err) {
-      clearInterval(stepTimer);
       setError(err instanceof Error ? err.message : '파이프라인 실행 실패');
     } finally {
       setRunning(false);
@@ -192,6 +264,8 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
     setCurrentStep(null);
     setError(null);
     setTopic('');
+    setVideoType('heygen');
+    setVideoEngine('kling');
   }
 
   return (
@@ -401,6 +475,135 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
             </div>
           </div>
 
+          {/* Video Type Selection */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-[#1a1a2e]">영상 타입</span>
+            <div className="grid grid-cols-2 gap-2">
+              <label
+                className={cn(
+                  'flex items-center gap-2 rounded-lg border px-3 py-2.5 cursor-pointer transition-all',
+                  videoType === 'heygen'
+                    ? 'border-[#1a5c2e] bg-[#e8f5e9] shadow-sm'
+                    : 'border-gray-200 hover:border-gray-300',
+                  running && 'opacity-50 cursor-not-allowed'
+                )}
+              >
+                <input
+                  type="radio"
+                  name="video-type"
+                  value="heygen"
+                  checked={videoType === 'heygen'}
+                  onChange={() => setVideoType('heygen')}
+                  disabled={running}
+                  className="accent-[#1a5c2e]"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <svg className="w-4 h-4 text-[#1a5c2e]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    <span className="text-sm font-medium text-[#1a1a2e]">AI 아바타 (HeyGen)</span>
+                    <span className="text-[10px] font-bold bg-[#1a5c2e] text-white px-1.5 py-0.5 rounded-full">추천</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">AI 전문가가 스크립트를 읽는 영상</p>
+                </div>
+              </label>
+              <label
+                className={cn(
+                  'flex items-center gap-2 rounded-lg border px-3 py-2.5 cursor-pointer transition-all',
+                  videoType === 'slideshow'
+                    ? 'border-[#1a5c2e] bg-[#e8f5e9] shadow-sm'
+                    : 'border-gray-200 hover:border-gray-300',
+                  running && 'opacity-50 cursor-not-allowed'
+                )}
+              >
+                <input
+                  type="radio"
+                  name="video-type"
+                  value="slideshow"
+                  checked={videoType === 'slideshow'}
+                  onChange={() => setVideoType('slideshow')}
+                  disabled={running}
+                  className="accent-[#1a5c2e]"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <span className="text-sm font-medium text-[#1a1a2e]">AI 영상 (DALL-E + AI 엔진)</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">섹션별 AI 영상 클립 생성</p>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Video Engine Selection (slideshow only) */}
+          {videoType === 'slideshow' && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-[#1a1a2e]">영상 생성 엔진</span>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { value: 'kling' as const, label: 'Kling AI', badge: '추천', desc: '자연스러운 동작' },
+                  { value: 'runway' as const, label: 'Runway Gen-4', badge: null, desc: '빠른 생성' },
+                  { value: 'sora' as const, label: 'Sora (OpenAI)', badge: null, desc: '최신 모델' },
+                ]).map((engine) => (
+                  <label
+                    key={engine.value}
+                    className={cn(
+                      'flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-all text-sm',
+                      videoEngine === engine.value
+                        ? 'border-[#1a5c2e] bg-[#e8f5e9] shadow-sm'
+                        : 'border-gray-200 hover:border-gray-300',
+                      running && 'opacity-50 cursor-not-allowed'
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="video-engine"
+                      value={engine.value}
+                      checked={videoEngine === engine.value}
+                      onChange={() => setVideoEngine(engine.value)}
+                      disabled={running}
+                      className="accent-[#1a5c2e]"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1">
+                        <span className="font-medium text-[#1a1a2e] truncate">{engine.label}</span>
+                        {engine.badge && (
+                          <span className="text-[10px] font-bold bg-[#1a5c2e] text-white px-1.5 py-0.5 rounded-full shrink-0">
+                            {engine.badge}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500 truncate">{engine.desc}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Avatar Selection (HeyGen only) */}
+          {videoType === 'heygen' && avatars.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-[#1a1a2e]">아바타 선택</span>
+              <select
+                value={selectedAvatarId}
+                onChange={(e) => setSelectedAvatarId(e.target.value)}
+                disabled={running}
+                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-[#1a1a2e] focus:border-[#1a5c2e] focus:outline-none focus:ring-2 focus:ring-[#1a5c2e]/20 disabled:opacity-50"
+              >
+                {avatars.map((avatar) => (
+                  <option key={avatar.id} value={avatar.id}>
+                    {avatar.name} ({avatar.category === 'custom' ? '커스텀' : avatar.category === 'professional' ? '프로' : avatar.category === 'casual' ? '캐주얼' : '다양성'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Premium Mode Toggle */}
           <div className={cn(
             'rounded-xl border p-4 transition-all',
@@ -463,9 +666,9 @@ function SinglePipelineSection({ platformAccounts }: { platformAccounts: Platfor
                   <span className="font-medium text-amber-700">DALL-E 3</span>
                   <p className="text-amber-500">AI 이미지</p>
                 </div>
-                <div className="bg-white/80 rounded-lg px-2 py-1.5 text-center opacity-50">
-                  <span className="font-medium text-gray-500">Mubert</span>
-                  <p className="text-gray-400">설정 필요</p>
+                <div className="bg-white/80 rounded-lg px-2 py-1.5 text-center">
+                  <span className="font-medium text-amber-700">Mubert</span>
+                  <p className="text-amber-500">AI BGM</p>
                 </div>
               </div>
             )}

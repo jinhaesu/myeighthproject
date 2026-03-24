@@ -4,6 +4,7 @@ import type {
   GenerateVideoRequest,
   ApiResponse,
   ScriptSection,
+  VideoEngine,
 } from '@/types';
 
 interface ContentRow {
@@ -14,10 +15,92 @@ interface ContentRow {
   status: string;
 }
 
-export async function POST(request: Request) {
-  const startTime = Date.now();
-  let contentId: number | undefined;
+// ─── Background processing function ─────────────────────────────────────────
 
+async function processVideoGeneration(
+  contentId: number,
+  logId: number,
+  audioPath: string,
+  subtitlePath: string | null,
+  options: {
+    backgroundColor?: string;
+    backgroundImage?: string;
+    fontSize?: number;
+    sections?: Array<{ body: string; visual_prompt?: string; duration_seconds: number }>;
+    generateImages: boolean;
+    videoEngine: VideoEngine;
+  }
+) {
+  const startTime = Date.now();
+
+  try {
+    // Update progress: starting
+    run(
+      `UPDATE generation_logs SET output_result = ? WHERE id = ?`,
+      [
+        JSON.stringify({
+          current_section: 0,
+          total_sections: options.sections?.length ?? 0,
+          message: '영상 생성 시작...',
+        }),
+        logId,
+      ]
+    );
+
+    // Generate video (this takes a long time)
+    const result = await generateVideo(contentId, audioPath, subtitlePath, {
+      backgroundColor: options.backgroundColor,
+      backgroundImage: options.backgroundImage,
+      fontSize: options.fontSize,
+      sections: options.sections,
+      generateImages: options.generateImages,
+      videoEngine: options.videoEngine,
+    });
+
+    const durationMs = Date.now() - startTime;
+
+    // Update content
+    run(
+      `UPDATE contents SET video_path = ?, status = 'video_ready' WHERE id = ?`,
+      [result.videoPath, contentId]
+    );
+
+    // Mark log as completed
+    run(
+      `UPDATE generation_logs SET status = 'completed', output_result = ?, duration_ms = ? WHERE id = ?`,
+      [
+        JSON.stringify({
+          video_path: result.videoPath,
+          videoPath: result.videoPath,
+          videoSizeBytes: result.videoSizeBytes,
+          durationSeconds: result.durationSeconds,
+          slideshowMode: !!(options.sections && options.sections.length > 0),
+          sectionCount: options.sections?.length ?? 0,
+          message: '영상 생성 완료!',
+        }),
+        durationMs,
+        logId,
+      ]
+    );
+
+    console.log(`[Video] Background generation completed for content ${contentId} (${durationMs}ms)`);
+  } catch (error) {
+    const durationMs = Date.now() - startTime;
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+
+    // Mark log as failed
+    run(
+      `UPDATE generation_logs SET status = 'failed', error_message = ?, duration_ms = ? WHERE id = ?`,
+      [msg, durationMs, logId]
+    );
+
+    console.error(`[Video] Background generation failed for content ${contentId}: ${msg}`);
+  }
+}
+
+// ─── POST /api/generate/video ───────────────────────────────────────────────
+
+export async function POST(request: Request) {
   try {
     const body: GenerateVideoRequest = await request.json();
 
@@ -28,7 +111,7 @@ export async function POST(request: Request) {
       );
     }
 
-    contentId = body.content_id;
+    const contentId = body.content_id;
 
     // Fetch content
     const content = queryOne<ContentRow>(
@@ -51,7 +134,7 @@ export async function POST(request: Request) {
     }
 
     // Parse sections from content DB or request body
-    let sections: Array<{ body: string; duration_seconds: number }> | undefined;
+    let sections: Array<{ body: string; visual_prompt?: string; duration_seconds: number }> | undefined;
 
     if (body.sections && body.sections.length > 0) {
       sections = body.sections;
@@ -61,6 +144,7 @@ export async function POST(request: Request) {
         if (Array.isArray(parsed) && parsed.length > 0) {
           sections = parsed.map((s) => ({
             body: s.body,
+            visual_prompt: s.visual_prompt,
             duration_seconds: s.duration_seconds,
           }));
         }
@@ -70,10 +154,11 @@ export async function POST(request: Request) {
     }
 
     const generateImages = body.generate_images !== false; // default true
+    const videoEngine: VideoEngine = body.video_engine || 'kling';
 
-    // Log start
-    run(
-      `INSERT INTO generation_logs (content_id, step, status, input_params) VALUES (?, 'video', 'started', ?)`,
+    // Create generation log with 'started' status
+    const logResult = run(
+      `INSERT INTO generation_logs (content_id, step, status, input_params, output_result) VALUES (?, 'video', 'started', ?, ?)`,
       [
         contentId,
         JSON.stringify({
@@ -82,75 +167,42 @@ export async function POST(request: Request) {
           fontSize: body.font_size,
           sectionCount: sections?.length ?? 0,
           generateImages,
+          videoEngine,
         }),
-      ]
-    );
-
-    // Generate video
-    const result = await generateVideo(
-      contentId,
-      content.audio_path,
-      content.subtitle_path,
-      {
-        backgroundColor: body.background_color,
-        backgroundImage: body.background_image,
-        fontSize: body.font_size,
-        sections,
-        generateImages,
-      }
-    );
-
-    const durationMs = Date.now() - startTime;
-
-    // Duration warning for short-form
-    let durationWarning: string | undefined;
-    if (result.durationSeconds > 60) {
-      durationWarning = `Video duration (${Math.round(result.durationSeconds)}s) exceeds 60s short-form limit. Consider trimming the script.`;
-    }
-
-    // Update content
-    run(
-      `UPDATE contents SET video_path = ?, status = 'video_ready' WHERE id = ?`,
-      [result.videoPath, contentId]
-    );
-
-    // Log completion
-    run(
-      `INSERT INTO generation_logs (content_id, step, status, output_result, duration_ms) VALUES (?, 'video', 'completed', ?, ?)`,
-      [
-        contentId,
         JSON.stringify({
-          videoPath: result.videoPath,
-          videoSizeBytes: result.videoSizeBytes,
-          durationSeconds: result.durationSeconds,
-          slideshowMode: !!sections,
-          sectionCount: sections?.length ?? 0,
+          current_section: 0,
+          total_sections: sections?.length ?? 0,
+          message: '영상 생성 대기 중...',
         }),
-        durationMs,
       ]
     );
 
+    const logId = Number(logResult.lastInsertRowid);
+
+    // Start background processing (fire-and-forget)
+    processVideoGeneration(contentId, logId, content.audio_path, content.subtitle_path, {
+      backgroundColor: body.background_color,
+      backgroundImage: body.background_image,
+      fontSize: body.font_size,
+      sections,
+      generateImages,
+      videoEngine,
+    }).catch((err) => {
+      console.error(`[Video] Unhandled error in background processing:`, err);
+    });
+
+    // Return immediately with task info
     return Response.json({
       success: true,
       data: {
-        videoPath: result.videoPath,
-        videoSizeBytes: result.videoSizeBytes,
-        durationSeconds: result.durationSeconds,
-        generationTimeMs: durationMs,
-        slideshowMode: !!sections,
-        ...(durationWarning && { durationWarning }),
+        task_id: logId,
+        content_id: contentId,
+        status: 'processing',
+        message: '영상 생성이 시작되었습니다. 상태를 폴링하세요.',
       },
     } satisfies ApiResponse);
   } catch (error) {
-    const durationMs = Date.now() - startTime;
     const msg = error instanceof Error ? error.message : 'Unknown error';
-
-    if (contentId) {
-      run(
-        `INSERT INTO generation_logs (content_id, step, status, error_message, duration_ms) VALUES (?, 'video', 'failed', ?, ?)`,
-        [contentId, msg, durationMs]
-      );
-    }
 
     return Response.json(
       { success: false, error: msg } satisfies ApiResponse,

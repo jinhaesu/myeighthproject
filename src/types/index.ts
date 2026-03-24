@@ -35,11 +35,12 @@ export interface AdConfig {
 
 export interface ScriptSection {
   order: number;
-  title: string;
-  body: string;
+  title: string;              // 내부 참조용 (TTS에 안 읽힘)
+  body: string;               // 나레이션 대본 (TTS가 읽을 텍스트만, 태그 없이)
+  visual_prompt: string;      // 영상/이미지 생성용 프롬프트 (영어)
+  visual_description: string; // 시각 연출 설명 (한국어, 사용자 확인용)
   duration_seconds: number;
   shot_type?: ShotType;
-  visual_prompt?: string;
 }
 
 export interface Content {
@@ -80,7 +81,7 @@ export interface CalendarEvent {
 export interface GenerationLog {
   id: number;
   content_id: number;
-  step: 'script' | 'tts' | 'video' | 'caption' | 'pipeline' | 'image' | 'bgm' | 'ai_video';
+  step: 'script' | 'tts' | 'video' | 'caption' | 'pipeline' | 'image' | 'bgm' | 'ai_video' | 'heygen' | 'kling';
   status: 'started' | 'completed' | 'failed';
   input_params: Record<string, unknown> | null;
   output_result: Record<string, unknown> | null;
@@ -171,7 +172,8 @@ export interface GenerateVideoRequest {
   background_image?: string;
   font_size?: number;
   generate_images?: boolean;        // Generate DALL-E images for sections (default true)
-  sections?: Array<{ body: string; duration_seconds: number }>;
+  video_engine?: VideoEngine;       // 'kling' | 'runway' | 'sora' (default: kling)
+  sections?: Array<{ body: string; visual_prompt?: string; duration_seconds: number }>;
 }
 
 export interface CreatePlatformAccountRequest {
@@ -207,6 +209,9 @@ export interface CreateCalendarEventRequest {
 
 // ─── Pipeline Request Types ──────────────────────────────────────────────────
 
+export type VideoType = 'slideshow' | 'heygen';
+export type VideoEngine = 'kling' | 'runway' | 'sora';
+
 export interface PipelineRequest {
   content_type: ContentType;
   topic: string;
@@ -220,6 +225,9 @@ export interface PipelineRequest {
   generate_bgm?: boolean;        // Auto-generate BGM with Mubert
   video_length?: VideoLength;
   ad_config?: AdConfig;
+  video_type?: VideoType;        // 'slideshow' (DALL-E + engine) or 'heygen' (AI avatar)
+  video_engine?: VideoEngine;    // 'kling' | 'runway' | 'sora' (default: kling)
+  avatar_id?: string;            // HeyGen avatar ID
 }
 
 export interface BulkPipelineRequest {

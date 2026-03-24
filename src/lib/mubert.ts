@@ -29,13 +29,17 @@ async function getPat(): Promise<string> {
   const email = process.env.MUBERT_EMAIL;
   const token = process.env.MUBERT_API_TOKEN;
 
+  const license = process.env.MUBERT_LICENSE; // ttmmubertlicense#... 형식
+
   if (!email || !token) {
     throw new Error(
-      'MUBERT_EMAIL과 MUBERT_API_TOKEN 환경변수를 설정해주세요. ' +
-      'MUBERT_EMAIL은 Mubert 가입 시 사용한 이메일입니다. ' +
-      '(MUBERT_API_ID는 UUID이므로 email 파라미터에 사용할 수 없습니다)'
+      'MUBERT_EMAIL과 MUBERT_API_TOKEN 환경변수가 필요합니다. ' +
+      'Mubert 대시보드에서 확인해주세요.'
     );
   }
+
+  // license가 별도 설정되어 있으면 사용, 없으면 token을 license로도 시도
+  const licenseValue = license || `ttmmubertlicense#${token}`;
 
   const response = await fetch(`${MUBERT_API_BASE}/GetServiceAccess`, {
     method: 'POST',
@@ -44,7 +48,7 @@ async function getPat(): Promise<string> {
       method: 'GetServiceAccess',
       params: {
         email,
-        license: token,
+        license: licenseValue,
         token,
         mode: 'loop',
       },

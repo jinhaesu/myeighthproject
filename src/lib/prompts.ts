@@ -91,6 +91,22 @@ const SHOT_STRUCTURES: Record<VideoLength, string> = {
 
 // ─── Content Type Prompts (기존 + 광고) ─────────────────────────────────────
 
+// ─── Visual Prompt Guidelines ─────────────────────────────────────────────
+
+const VISUAL_PROMPT_GUIDELINES = `
+
+중요 (반드시 지켜야 할 규칙):
+- body는 순수 나레이션 텍스트만 작성하세요. [후킹], [핵심정보], (효과음) 같은 태그, 괄호, 구조 표시를 절대 포함하지 마세요. TTS가 이 텍스트를 그대로 읽습니다.
+- visual_prompt는 반드시 영어로 작성하세요. DALL-E와 Kling AI가 이해할 수 있는 구체적인 영상/이미지 생성 프롬프트입니다.
+  - 음식 재료가 캐릭터화되어 움직이는 애니메이션 스타일 장면
+  - 또는 전문적인 푸드 포토그래피 스타일
+  - 카메라 앵글(close-up, overhead, eye-level), 조명(warm, natural, studio), 분위기(cozy, vibrant, professional)를 구체적으로 묘사
+  - 캐릭터나 동작이 있다면 구체적으로 묘사 (예: "garlic character wearing a cape, punching virus monsters")
+  - 항상 "vertical 9:16 format"을 마지막에 포함
+  - "No text overlay"를 포함
+- visual_description은 한국어로 해당 장면이 시각적으로 어떻게 보여야 하는지 설명
+- title은 내부 참조용이며 TTS에 읽히지 않습니다. 간결하게 섹션 역할을 표시하세요 (예: "후킹", "핵심정보1", "마무리")`.trim();
+
 const PROMPTS: Record<ContentType, Record<Language, string>> = {
   health_info: {
     ko: `${BRAND_VOICE}
@@ -102,12 +118,16 @@ const PROMPTS: Record<ContentType, Record<Language, string>> = {
 주의사항:
 - 의학적 단정은 피하고 "~에 도움이 될 수 있어요" 식으로
 - 출처가 있는 정보 위주로
-- 너무 어려운 용어는 쉽게 풀어서 설명`,
+- 너무 어려운 용어는 쉽게 풀어서 설명
+
+${VISUAL_PROMPT_GUIDELINES}`,
     en: `${BRAND_VOICE}
 
 [Health Information Content]
 Write a short-form video script about the given health topic.
-Match the script length to the specified video duration.`,
+Match the script length to the specified video duration.
+
+${VISUAL_PROMPT_GUIDELINES}`,
   },
 
   recipe: {
@@ -119,11 +139,15 @@ Match the script length to the specified video duration.`,
 주의사항:
 - 재료는 구하기 쉬운 것 위주
 - 조리 시간이 짧고 간단한 레시피
-- 건강에 좋은 포인트를 자연스럽게 녹여서`,
+- 건강에 좋은 포인트를 자연스럽게 녹여서
+
+${VISUAL_PROMPT_GUIDELINES}`,
     en: `${BRAND_VOICE}
 
 [Recipe Content]
-Write a short-form video script for the given recipe.`,
+Write a short-form video script for the given recipe.
+
+${VISUAL_PROMPT_GUIDELINES}`,
   },
 
   nutrition_tip: {
@@ -135,11 +159,15 @@ Write a short-form video script for the given recipe.`,
 주의사항:
 - 과학적 근거가 있는 내용
 - "이것만 먹으면 된다" 식의 과장 금지
-- 균형 잡힌 식단의 중요성 강조`,
+- 균형 잡힌 식단의 중요성 강조
+
+${VISUAL_PROMPT_GUIDELINES}`,
     en: `${BRAND_VOICE}
 
 [Nutrition Tip Content]
-Write a short-form video script about the given nutrition topic.`,
+Write a short-form video script about the given nutrition topic.
+
+${VISUAL_PROMPT_GUIDELINES}`,
   },
 
   product_ad: {
@@ -158,12 +186,16 @@ ${AD_PRINCIPLES}
 - 효익 전달은 간결한 텍스트 오버레이로
 - CTA는 자연스럽게
 
-${SHOT_PROMPT_TEMPLATES}`,
+${SHOT_PROMPT_TEMPLATES}
+
+${VISUAL_PROMPT_GUIDELINES}`,
     en: `${BRAND_VOICE}
 
 [Product Ad — Performance Ad]
 Write a product-focused short-form performance ad script.
-Follow consumer brand ad grammar.`,
+Follow consumer brand ad grammar.
+
+${VISUAL_PROMPT_GUIDELINES}`,
   },
 
   brand_ad: {
@@ -181,11 +213,15 @@ ${AD_PRINCIPLES}
 - 기능성과 실용성을 동시에 전달
 - 실사 + AI 혼합 스타일이 가장 자연스러움
 
-${SHOT_PROMPT_TEMPLATES}`,
+${SHOT_PROMPT_TEMPLATES}
+
+${VISUAL_PROMPT_GUIDELINES}`,
     en: `${BRAND_VOICE}
 
 [Brand Ad — Lifestyle]
-Write a lifestyle-focused brand awareness ad script.`,
+Write a lifestyle-focused brand awareness ad script.
+
+${VISUAL_PROMPT_GUIDELINES}`,
   },
 };
 
@@ -283,14 +319,18 @@ export function buildUserPrompt(
   "sections": [
     {
       "order": 1,
-      "title": "섹션 제목",
-      "body": "섹션 내용 (나레이션 대본)",
+      "title": "섹션 제목 (내부 참조용, 예: 후킹, 핵심정보1)",
+      "body": "나레이션 대본 (순수 텍스트만, 태그/괄호 절대 금지)",
+      "visual_prompt": "English visual prompt for DALL-E/Kling (camera angle, lighting, mood, action, characters, vertical 9:16 format, No text overlay)",
+      "visual_description": "한국어 시각 연출 설명 (이 장면이 어떻게 보여야 하는지)",
       "duration_seconds": 5
     }
   ],
   "total_duration_seconds": ${videoLength},
   "tags": ["태그1", "태그2"]
-}`;
+}
+
+주의: body에는 절대로 [후킹], [핵심정보] 같은 태그를 넣지 마세요. TTS가 그대로 읽습니다.`;
   }
 
   return prompt;

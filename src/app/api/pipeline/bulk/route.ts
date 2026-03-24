@@ -1,8 +1,47 @@
 import type {
   BulkPipelineRequest,
-  PipelineResult,
   ApiResponse,
 } from '@/types';
+
+// ─── Helper: poll pipeline status until done ────────────────────────────────
+
+async function waitForPipeline(
+  baseUrl: string,
+  contentId: number,
+  timeoutMs: number = 900_000, // 15 minutes
+  intervalMs: number = 5_000,
+): Promise<{ success: boolean; data?: Record<string, unknown>; error?: string }> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      const res = await fetch(`${baseUrl}/api/pipeline/status?content_id=${contentId}`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const json = await res.json();
+
+      if (json.success && json.data) {
+        const { status, result, error } = json.data;
+
+        if (status === 'completed') {
+          return { success: true, data: result };
+        }
+        if (status === 'failed') {
+          return { success: false, error: error || 'Pipeline failed' };
+        }
+        // Still processing, continue polling
+      }
+    } catch {
+      // Polling error, continue
+    }
+
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+
+  return { success: false, error: 'Pipeline timed out' };
+}
 
 // ─── POST /api/pipeline/bulk ────────────────────────────────────────────────
 
@@ -27,7 +66,7 @@ export async function POST(request: Request) {
 
     const language = body.language || 'ko';
     const platforms = body.platforms || [];
-    const results: PipelineResult[] = [];
+    const results: Record<string, unknown>[] = [];
     const errors: Array<{ index: number; topic: string; error: string }> = [];
 
     // Calculate schedule dates if auto_schedule is enabled
@@ -57,21 +96,33 @@ export async function POST(request: Request) {
           auto_caption: true,
         };
 
+        // Start pipeline (returns immediately with task_id)
         const res = await fetch(`${baseUrl}/api/pipeline`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(pipelineBody),
         });
 
-        const json: ApiResponse<PipelineResult> = await res.json();
+        const json: ApiResponse<{ task_id: number; content_id: number }> = await res.json();
 
         if (json.success && json.data) {
-          results.push(json.data);
+          // Wait for pipeline to complete
+          const result = await waitForPipeline(baseUrl, json.data.content_id);
+
+          if (result.success && result.data) {
+            results.push(result.data);
+          } else {
+            errors.push({
+              index: i,
+              topic: item.topic,
+              error: result.error || 'Unknown pipeline error',
+            });
+          }
         } else {
           errors.push({
             index: i,
             topic: item.topic,
-            error: json.error || 'Unknown pipeline error',
+            error: json.error || 'Failed to start pipeline',
           });
         }
       } catch (err) {

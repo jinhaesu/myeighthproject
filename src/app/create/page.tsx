@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import TextArea from '@/components/ui/TextArea';
 import ProgressBar from '@/components/ui/ProgressBar';
-import { apiGet, apiPost, getFileUrl } from '@/lib/api';
+import { apiGet, apiPost, apiPatch, getFileUrl } from '@/lib/api';
 import {
   cn,
   contentTypeLabel,
@@ -27,7 +27,26 @@ import type {
   ScriptSection,
   PlatformAccount,
   Platform,
+  VideoEngine,
 } from '@/types';
+
+// ─── Avatar Types ───────────────────────────────────────────────────────────
+
+interface AvatarInfo {
+  id: string;
+  name: string;
+  category: 'custom' | 'professional' | 'casual' | 'diverse';
+  preview_url: string | null;
+}
+
+const DEFAULT_AVATAR_ID = '289259c61ef142ebba0bb463f35f864b';
+
+const CATEGORY_LABELS: Record<string, string> = {
+  custom: '커스텀',
+  professional: '프로',
+  casual: '캐주얼',
+  diverse: '다양성',
+};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -205,6 +224,7 @@ export default function CreatePage() {
   // ── Step 2 state ──
   const [script, setScript] = useState('');
   const [sections, setSections] = useState<ScriptSection[]>([]);
+  const [scriptSections, setScriptSections] = useState<ScriptSection[]>([]);
   const [shots, setShots] = useState<AdShot[]>([]);
   const [hooks, setHooks] = useState<string[]>([]);
   const [ctaOptions, setCtaOptions] = useState<string[]>([]);
@@ -217,9 +237,19 @@ export default function CreatePage() {
   const [imageGenerating, setImageGenerating] = useState(false);
   const [bgmGenerated, setBgmGenerated] = useState(false);
   const [bgmGenerating, setBgmGenerating] = useState(false);
+  const [sectionsDirty, setSectionsDirty] = useState(false);
+  const [sectionsSaving, setSectionsSaving] = useState(false);
 
   // ── Step 3 state ──
+  const [videoType, setVideoType] = useState<'slideshow' | 'heygen'>('heygen');
+  const [videoEngine, setVideoEngine] = useState<VideoEngine>('kling');
   const [videoPath, setVideoPath] = useState<string | null>(null);
+  const [avatars, setAvatars] = useState<AvatarInfo[]>([]);
+  const [selectedAvatarId, setSelectedAvatarId] = useState<string>(DEFAULT_AVATAR_ID);
+  const [avatarsLoading, setAvatarsLoading] = useState(false);
+  const [videoProgressMessage, setVideoProgressMessage] = useState<string | null>(null);
+  const [videoProgressPercent, setVideoProgressPercent] = useState(0);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Step 4 state ──
   const [platformAccounts, setPlatformAccounts] = useState<PlatformAccount[]>([]);
@@ -231,6 +261,28 @@ export default function CreatePage() {
   // ── Loading & error ──
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Load avatars when entering step 3 with heygen selected
+  const loadAvatars = useCallback(async () => {
+    if (avatars.length > 0) return;
+    setAvatarsLoading(true);
+    try {
+      const res = await apiGet<AvatarInfo[]>('/api/avatars');
+      if (res.data) {
+        setAvatars(res.data);
+      }
+    } catch {
+      // silently fail - will use default avatar
+    } finally {
+      setAvatarsLoading(false);
+    }
+  }, [avatars.length]);
+
+  useEffect(() => {
+    if (currentStep === 3 && videoType === 'heygen') {
+      loadAvatars();
+    }
+  }, [currentStep, videoType, loadAvatars]);
 
   const progressPercent = ((currentStep - 1) / STEPS.length) * 100;
   const isAd = isAdType(contentType);
@@ -320,6 +372,7 @@ export default function CreatePage() {
       if (res.data) {
         setScript(res.data.fullScript ?? '');
         setSections(res.data.sections ?? []);
+        setScriptSections(res.data.sections ?? []);
         setShots(res.data.shots ?? []);
         setHooks(res.data.hooks ?? []);
         setCtaOptions(res.data.cta_options ?? []);
@@ -340,6 +393,19 @@ export default function CreatePage() {
     setError(null);
     setLoading(true);
     try {
+      // Save edited sections/script before TTS generation
+      if (sectionsDirty || scriptSections.length > 0) {
+        const fullScript = scriptSections.length > 0
+          ? scriptSections.sort((a, b) => a.order - b.order).map(s => s.body).join('\n\n')
+          : script;
+        setScript(fullScript);
+        await apiPatch(`/api/contents/${contentId}`, {
+          script: fullScript,
+          sections: scriptSections.length > 0 ? scriptSections : undefined,
+        });
+        setSectionsDirty(false);
+      }
+
       await apiPost('/api/generate/tts', {
         content_id: contentId,
         tts_provider: ttsProvider,
@@ -353,21 +419,105 @@ export default function CreatePage() {
     }
   }
 
-  // ── Step 3: Generate video ──
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // ── Step 3: Generate video (async with polling) ──
   async function handleGenerateVideo() {
     if (!contentId) return;
     setError(null);
     setLoading(true);
+    setVideoProgressMessage('영상 생성을 시작하는 중...');
+    setVideoProgressPercent(0);
+
     try {
-      const res = await apiPost<{ videoPath: string }>('/api/generate/video', {
-        content_id: contentId,
-      });
-      if (res.data) {
-        setVideoPath(res.data.videoPath);
+      const isHeygen = videoType === 'heygen';
+      const statusUrl = isHeygen
+        ? `/api/generate/heygen/status?content_id=${contentId}`
+        : `/api/generate/video/status?content_id=${contentId}`;
+
+      if (isHeygen) {
+        // HeyGen AI avatar video - fire async request
+        await apiPost('/api/generate/heygen', {
+          content_id: contentId,
+          avatar_id: selectedAvatarId,
+        });
+      } else {
+        // Slideshow (DALL-E + AI Engine) - fire async request
+        await apiPost('/api/generate/video', {
+          content_id: contentId,
+          video_engine: videoEngine,
+          sections: scriptSections.length > 0
+            ? scriptSections.map(s => ({
+                body: s.body,
+                visual_prompt: s.visual_prompt,
+                duration_seconds: s.duration_seconds,
+              }))
+            : undefined,
+        });
       }
+
+      // Start polling for status
+      pollIntervalRef.current = setInterval(async () => {
+        try {
+          const statusRes = await apiGet<{
+            status: 'processing' | 'completed' | 'failed';
+            progress: string | null;
+            current_section: number | null;
+            total_sections: number | null;
+            video_path: string | null;
+            error: string | null;
+          }>(statusUrl);
+
+          if (statusRes.data) {
+            const { status, progress, current_section, total_sections, video_path, error: taskError } = statusRes.data;
+
+            if (status === 'completed') {
+              // Stop polling
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
+              if (video_path) {
+                setVideoPath(video_path);
+              }
+              setVideoProgressMessage(null);
+              setVideoProgressPercent(100);
+              setLoading(false);
+            } else if (status === 'failed') {
+              // Stop polling
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
+              setError(taskError || '영상 생성 실패');
+              setVideoProgressMessage(null);
+              setVideoProgressPercent(0);
+              setLoading(false);
+            } else {
+              // Still processing - update progress
+              if (progress) {
+                setVideoProgressMessage(progress);
+              }
+              if (current_section != null && total_sections != null && total_sections > 0) {
+                setVideoProgressPercent(Math.round((current_section / total_sections) * 100));
+              }
+            }
+          }
+        } catch {
+          // Polling error - don't stop, just retry next interval
+          console.warn('[Video] Status polling error, will retry...');
+        }
+      }, 5000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '영상 생성 실패');
-    } finally {
+      setError(err instanceof Error ? err.message : '영상 생성 요청 실패');
+      setVideoProgressMessage(null);
       setLoading(false);
     }
   }
@@ -791,6 +941,128 @@ export default function CreatePage() {
             </div>
           ) : (
             <div className="space-y-6">
+              {/* Sections editor from master (visual_prompt editing) */}
+              {scriptSections.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-[#111827]">스크립트 (섹션별 편집)</label>
+                    {sectionsDirty && (
+                      <button
+                        type="button"
+                        disabled={sectionsSaving}
+                        onClick={async () => {
+                          if (!contentId) return;
+                          setSectionsSaving(true);
+                          try {
+                            const fullScript = scriptSections
+                              .sort((a, b) => a.order - b.order)
+                              .map(s => s.body)
+                              .join('\n\n');
+                            setScript(fullScript);
+                            await apiPatch(`/api/contents/${contentId}`, {
+                              script: fullScript,
+                              sections: scriptSections,
+                            });
+                            setSectionsDirty(false);
+                          } catch (err) {
+                            setError(err instanceof Error ? err.message : '저장 실패');
+                          } finally {
+                            setSectionsSaving(false);
+                          }
+                        }}
+                        className={cn(
+                          'inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-all',
+                          sectionsSaving
+                            ? 'bg-gray-100 text-gray-400'
+                            : 'bg-[#1a5c2e] text-white hover:bg-[#144723] shadow-sm'
+                        )}
+                      >
+                        {sectionsSaving ? (
+                          <>
+                            <div className="w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+                            저장 중...
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            변경사항 저장
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                  {scriptSections
+                    .sort((a, b) => a.order - b.order)
+                    .map((section, idx) => (
+                    <div key={idx} className="border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="bg-gray-50 px-4 py-2 flex items-center justify-between border-b border-gray-100">
+                        <span className="text-xs font-semibold text-[#374151]">
+                          {section.order}. {section.title}
+                        </span>
+                        <span className="text-xs text-[#6b7280]">{section.duration_seconds}s</span>
+                      </div>
+                      <div className="p-4 space-y-3">
+                        <div>
+                          <p className="text-xs font-medium text-[#6b7280] mb-1">나레이션</p>
+                          <textarea
+                            value={section.body}
+                            onChange={(e) => {
+                              const updated = [...scriptSections];
+                              updated[idx] = { ...updated[idx], body: e.target.value };
+                              setScriptSections(updated);
+                              setSectionsDirty(true);
+                            }}
+                            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-[#111827] leading-relaxed focus:border-[#1a5c2e] focus:outline-none focus:ring-2 focus:ring-[#1a5c2e]/10 transition-all resize-y min-h-[60px]"
+                          />
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-amber-600 mb-1 flex items-center gap-1">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            영상 시나리오 (영어 - DALL-E/Kling 프롬프트)
+                          </p>
+                          <textarea
+                            value={section.visual_prompt}
+                            onChange={(e) => {
+                              const updated = [...scriptSections];
+                              updated[idx] = { ...updated[idx], visual_prompt: e.target.value };
+                              setScriptSections(updated);
+                              setSectionsDirty(true);
+                            }}
+                            placeholder="e.g. Cute animated garlic character bouncing..."
+                            className="w-full rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-[#374151] leading-relaxed font-mono focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/10 transition-all resize-y min-h-[50px]"
+                          />
+                        </div>
+                        {section.visual_description && (
+                          <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                            <p className="text-xs font-medium text-blue-600 mb-1 flex items-center gap-1">
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              시각 설명 (참고용)
+                            </p>
+                            <p className="text-xs text-blue-800">{section.visual_description}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Full script textarea (fallback when no sections) */}
+              {scriptSections.length === 0 && (
+                <TextArea
+                  id="script"
+                  label="전체 나레이션 대본 (편집 가능 - TTS가 읽을 텍스트)"
+                  value={script}
+                  onChange={(e) => setScript(e.target.value)}
+                  className="min-h-[200px] font-mono text-sm"
+                />
+              )}
 
               {/* ── Shot list (for ads or short-form <=30s) ── */}
               {(isAd || videoLength <= 30) && shots.length > 0 && (
@@ -985,21 +1257,44 @@ export default function CreatePage() {
                     )}
                   </Button>
 
-                  <div className="relative group">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={true}
-                    >
-                      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-                      </svg>
-                      Mubert BGM (설정 필요)
-                    </Button>
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 bg-gray-800 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                      Mubert API 설정이 필요합니다. BGM 없이도 영상 생성 가능합니다.
-                    </div>
-                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={bgmGenerating || bgmGenerated || !contentId}
+                    onClick={async () => {
+                      if (!contentId) return;
+                      setBgmGenerating(true);
+                      try {
+                        await apiPost('/api/generate/bgm', { content_id: contentId });
+                        setBgmGenerated(true);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : 'BGM 생성 실패');
+                      } finally {
+                        setBgmGenerating(false);
+                      }
+                    }}
+                  >
+                    {bgmGenerating ? (
+                      <>
+                        <div className="w-3 h-3 border-2 border-[#1a5c2e] border-t-transparent rounded-full animate-spin" />
+                        BGM 생성 중...
+                      </>
+                    ) : bgmGenerated ? (
+                      <>
+                        <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        BGM 생성됨
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                        </svg>
+                        BGM 생성 (Mubert AI)
+                      </>
+                    )}
+                  </Button>
                 </div>
               </div>
 
@@ -1037,36 +1332,265 @@ export default function CreatePage() {
         <Card className="space-y-6 animate-fade-in">
           <div>
             <h2 className="text-lg font-semibold text-[#111827]">영상 생성</h2>
-            <p className="text-sm text-[#6b7280] mt-1">스크립트와 음성을 결합하여 영상을 제작합니다</p>
+            <p className="text-sm text-[#6b7280] mt-1">영상 타입을 선택하고 생성합니다</p>
           </div>
 
           {!videoPath ? (
-            <div className="text-center py-12 space-y-5">
-              <div className="w-16 h-16 bg-gradient-to-br from-[#e8f5e9] to-[#c8e6c9] rounded-2xl flex items-center justify-center mx-auto">
-                <svg className="w-8 h-8 text-[#1a5c2e]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-[#111827] font-medium mb-1">영상을 생성할 준비가 되었습니다</p>
-                <p className="text-sm text-[#6b7280]">스크립트와 음성을 결합하여 {videoLength}초 영상을 생성합니다</p>
-              </div>
-              <Button onClick={handleGenerateVideo} disabled={loading} size="lg">
-                {loading ? (
-                  <div className="flex items-center gap-3">
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>AI가 영상을 생성하고 있습니다... (섹션당 약 30초 소요)</span>
+            <div className="space-y-6">
+              {/* Video Type Selection */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label
+                  className={cn(
+                    'relative flex flex-col rounded-xl border-2 p-4 cursor-pointer transition-all duration-200',
+                    videoType === 'heygen'
+                      ? 'border-[#1a5c2e] bg-green-50 shadow-md'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="video-type"
+                    value="heygen"
+                    checked={videoType === 'heygen'}
+                    onChange={() => setVideoType('heygen')}
+                    className="sr-only"
+                  />
+                  {videoType === 'heygen' && (
+                    <span className="absolute top-2 right-2 bg-[#1a5c2e] text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      추천
+                    </span>
+                  )}
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={cn(
+                      'w-10 h-10 rounded-lg flex items-center justify-center',
+                      videoType === 'heygen' ? 'bg-[#1a5c2e]/10' : 'bg-gray-100'
+                    )}>
+                      <svg className={cn('w-5 h-5', videoType === 'heygen' ? 'text-[#1a5c2e]' : 'text-gray-400')} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                    <span className={cn(
+                      'font-semibold',
+                      videoType === 'heygen' ? 'text-[#1a5c2e]' : 'text-[#111827]'
+                    )}>
+                      AI 아바타 (HeyGen)
+                    </span>
                   </div>
-                ) : (
-                  <>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    AI 영상 생성 (Runway + DALL-E)
-                  </>
+                  <p className="text-xs text-[#6b7280]">
+                    AI 전문가가 스크립트를 직접 읽는 영상을 생성합니다
+                  </p>
+                </label>
+
+                <label
+                  className={cn(
+                    'relative flex flex-col rounded-xl border-2 p-4 cursor-pointer transition-all duration-200',
+                    videoType === 'slideshow'
+                      ? 'border-[#1a5c2e] bg-green-50 shadow-md'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="video-type"
+                    value="slideshow"
+                    checked={videoType === 'slideshow'}
+                    onChange={() => setVideoType('slideshow')}
+                    className="sr-only"
+                  />
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={cn(
+                      'w-10 h-10 rounded-lg flex items-center justify-center',
+                      videoType === 'slideshow' ? 'bg-[#1a5c2e]/10' : 'bg-gray-100'
+                    )}>
+                      <svg className={cn('w-5 h-5', videoType === 'slideshow' ? 'text-[#1a5c2e]' : 'text-gray-400')} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <span className={cn(
+                      'font-semibold',
+                      videoType === 'slideshow' ? 'text-[#1a5c2e]' : 'text-[#111827]'
+                    )}>
+                      AI 영상 (DALL-E + AI 엔진)
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#6b7280]">
+                    섹션별 고품질 AI 영상 클립을 생성합니다
+                  </p>
+                </label>
+              </div>
+
+              {/* Video Engine Selection (slideshow only) */}
+              {videoType === 'slideshow' && (
+                <div className="space-y-2">
+                  <span className="text-sm font-medium text-[#111827]">영상 생성 엔진</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {([
+                      { value: 'kling' as const, label: 'Kling AI', badge: '추천', desc: '자연스러운 동작, 고품질' },
+                      { value: 'runway' as const, label: 'Runway Gen-4', badge: null, desc: '빠른 생성, 안정적' },
+                      { value: 'sora' as const, label: 'Sora (OpenAI)', badge: null, desc: '최신 모델' },
+                    ]).map((engine) => (
+                      <label
+                        key={engine.value}
+                        className={cn(
+                          'relative flex flex-col rounded-lg border-2 p-3 cursor-pointer transition-all duration-200',
+                          videoEngine === engine.value
+                            ? 'border-[#1a5c2e] bg-green-50 shadow-sm'
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name="video-engine"
+                          value={engine.value}
+                          checked={videoEngine === engine.value}
+                          onChange={() => setVideoEngine(engine.value)}
+                          className="sr-only"
+                        />
+                        <div className="flex items-center gap-2">
+                          <svg className={cn('w-4 h-4', videoEngine === engine.value ? 'text-[#1a5c2e]' : 'text-gray-400')} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                          <span className={cn(
+                            'text-sm font-semibold',
+                            videoEngine === engine.value ? 'text-[#1a5c2e]' : 'text-[#111827]'
+                          )}>
+                            {engine.label}
+                          </span>
+                          {engine.badge && (
+                            <span className="text-[10px] font-bold bg-[#1a5c2e] text-white px-1.5 py-0.5 rounded-full">
+                              {engine.badge}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-[#6b7280] mt-1 ml-6">{engine.desc}</p>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Avatar Selection (HeyGen only) */}
+              {videoType === 'heygen' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-[#111827]">아바타 선택</span>
+                    {avatarsLoading && (
+                      <div className="flex items-center gap-2 text-xs text-gray-400">
+                        <div className="w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+                        불러오는 중...
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-[320px] overflow-y-auto pr-1">
+                    {avatars.map((avatar) => (
+                      <button
+                        key={avatar.id}
+                        type="button"
+                        onClick={() => setSelectedAvatarId(avatar.id)}
+                        className={cn(
+                          'flex flex-col items-center gap-2 rounded-xl border-2 p-3 transition-all duration-200 text-left',
+                          selectedAvatarId === avatar.id
+                            ? 'border-[#1a5c2e] bg-green-50 shadow-md ring-2 ring-[#1a5c2e]/10'
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                        )}
+                      >
+                        {/* Avatar icon or preview */}
+                        <div className={cn(
+                          'w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold shrink-0',
+                          avatar.category === 'custom'
+                            ? 'bg-amber-100 text-amber-700'
+                            : avatar.category === 'professional'
+                              ? 'bg-blue-100 text-blue-700'
+                              : avatar.category === 'casual'
+                                ? 'bg-green-100 text-green-700'
+                                : 'bg-purple-100 text-purple-700'
+                        )}>
+                          {avatar.preview_url ? (
+                            <img
+                              src={avatar.preview_url}
+                              alt={avatar.name}
+                              className="w-full h-full rounded-full object-cover"
+                            />
+                          ) : (
+                            avatar.name.charAt(0)
+                          )}
+                        </div>
+                        <div className="text-center w-full min-w-0">
+                          <p className={cn(
+                            'text-xs font-medium truncate',
+                            selectedAvatarId === avatar.id ? 'text-[#1a5c2e]' : 'text-[#111827]'
+                          )}>
+                            {avatar.name}
+                          </p>
+                          <span className={cn(
+                            'text-[10px] px-1.5 py-0.5 rounded-full inline-block mt-1',
+                            avatar.category === 'custom'
+                              ? 'bg-amber-100 text-amber-600'
+                              : 'bg-gray-100 text-gray-500'
+                          )}>
+                            {CATEGORY_LABELS[avatar.category] || avatar.category}
+                          </span>
+                        </div>
+                        {selectedAvatarId === avatar.id && (
+                          <div className="absolute top-1 right-1 w-5 h-5 bg-[#1a5c2e] rounded-full flex items-center justify-center">
+                            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                            </svg>
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  {avatars.length > 0 && (
+                    <p className="text-xs text-[#6b7280]">
+                      선택된 아바타: <span className="font-medium text-[#111827]">{avatars.find(a => a.id === selectedAvatarId)?.name || '기본'}</span>
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Generate Button */}
+              <div className="space-y-4 pt-2">
+                {loading && videoProgressMessage && (
+                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3 animate-fade-in">
+                    <div className="flex items-center gap-3">
+                      <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                      <p className="text-sm text-blue-700 font-medium">
+                        AI가 영상을 생성하고 있습니다...
+                      </p>
+                    </div>
+                    <p className="text-xs text-blue-600 pl-8">
+                      {videoProgressMessage}
+                    </p>
+                    <div className="pl-8">
+                      <ProgressBar value={videoProgressPercent} />
+                    </div>
+                    <p className="text-xs text-[#6b7280] pl-8">
+                      페이지를 닫지 마세요. 서버에서 영상을 생성 중입니다. (타임아웃 없음)
+                    </p>
+                  </div>
                 )}
-              </Button>
+                <div className="text-center">
+                  <Button onClick={handleGenerateVideo} disabled={loading} size="lg">
+                    {loading ? (
+                      <div className="flex items-center gap-3">
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>영상 생성 중...</span>
+                      </div>
+                    ) : (
+                      <>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        {videoType === 'heygen'
+                          ? 'AI 아바타 영상 생성 (HeyGen)'
+                          : `AI 영상 생성 (${videoEngine === 'runway' ? 'Runway' : videoEngine === 'sora' ? 'Sora' : 'Kling'} + DALL-E)`}
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="space-y-6 animate-fade-in">

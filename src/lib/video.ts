@@ -3,7 +3,11 @@ import path from 'path';
 import fs from 'fs';
 import { promisify } from 'util';
 import OpenAI from 'openai';
+import { generateKlingVideo } from './kling';
 import { generateAIVideo } from './runway';
+import { generateSoraVideo } from './sora';
+import { run as dbRun } from './db';
+import type { VideoEngine } from '@/types';
 
 const execFileAsync = promisify(execFile);
 
@@ -26,6 +30,7 @@ export interface VideoResult {
 
 export interface SectionInput {
   body: string;
+  visual_prompt?: string;
   duration_seconds: number;
 }
 
@@ -34,7 +39,7 @@ export interface SectionInput {
 const DEFAULT_WIDTH = 1080;
 const DEFAULT_HEIGHT = 1920;
 const DEFAULT_BG_COLOR = '#1a1a2e';
-const DEFAULT_FONT_SIZE = 42;
+const DEFAULT_FONT_SIZE = 22;
 const MAX_SECTION_IMAGES = 4;
 const MAX_SHORT_FORM_DURATION = 60;
 
@@ -46,6 +51,28 @@ function getDefaultFontPath(): string {
 }
 
 const DEFAULT_FONT_PATH = getDefaultFontPath();
+
+// ─── Progress Reporting ──────────────────────────────────────────────────────
+
+function updateVideoProgress(contentId: number, currentSection: number, totalSections: number, message: string): void {
+  try {
+    // Update the latest 'started' video generation_log for this content
+    dbRun(
+      `UPDATE generation_logs SET output_result = ?
+       WHERE id = (SELECT id FROM generation_logs WHERE content_id = ? AND step = 'video' AND status = 'started' ORDER BY id DESC LIMIT 1)`,
+      [
+        JSON.stringify({
+          current_section: currentSection,
+          total_sections: totalSections,
+          message,
+        }),
+        contentId,
+      ]
+    );
+  } catch {
+    // best-effort progress update
+  }
+}
 
 // ─── OpenAI Client ─────────────────────────────────────────────────────────
 
@@ -72,11 +99,12 @@ interface SectionImageResult {
 
 async function generateSectionImage(
   client: OpenAI,
-  sectionBody: string,
+  section: SectionInput,
   outputPath: string,
 ): Promise<SectionImageResult | null> {
   try {
-    const prompt = buildImagePrompt(sectionBody);
+    // Use visual_prompt from AI-generated script if available, otherwise fallback
+    const prompt = section.visual_prompt || buildImagePrompt(section.body);
 
     const response = await client.images.generate({
       model: 'dall-e-3',
@@ -138,7 +166,7 @@ async function generateSectionImages(
   for (let i = 0; i < limitedSections.length; i++) {
     const outputPath = path.join(imageDir, `${contentId}_section_${i}.png`);
     console.log(`[Video] Generating image ${i + 1}/${limitedSections.length} for content ${contentId}...`);
-    const result = await generateSectionImage(client, limitedSections[i].body, outputPath);
+    const result = await generateSectionImage(client, limitedSections[i], outputPath);
     imageResults.push(result);
   }
 
@@ -187,6 +215,7 @@ export async function generateVideo(
   options: VideoOptions & {
     sections?: SectionInput[];
     generateImages?: boolean;
+    videoEngine?: VideoEngine;
   } = {}
 ): Promise<VideoResult> {
   const {
@@ -197,6 +226,7 @@ export async function generateVideo(
     height = DEFAULT_HEIGHT,
     sections,
     generateImages = true,
+    videoEngine = 'kling',
   } = options;
 
   const isProduction = process.env.NODE_ENV === 'production';
@@ -233,6 +263,7 @@ export async function generateVideo(
       height,
       generateImages,
       videoPath,
+      videoEngine,
     });
   }
 
@@ -261,9 +292,10 @@ async function generateSlideshowVideo(
     height: number;
     generateImages: boolean;
     videoPath: string;
+    videoEngine: VideoEngine;
   },
 ): Promise<VideoResult> {
-  const { backgroundColor, fontSize, width, height, generateImages, videoPath } = opts;
+  const { backgroundColor, fontSize, width, height, generateImages, videoPath, videoEngine } = opts;
 
   const isProduction = process.env.NODE_ENV === 'production';
   const outBase = isProduction ? '/tmp' : process.cwd();
@@ -282,78 +314,105 @@ async function generateSlideshowVideo(
 
   if (generateImages) {
     console.log(`[Video] Generating DALL-E images for ${limitedSections.length} sections...`);
+    updateVideoProgress(contentId, 0, limitedSections.length, `DALL-E 이미지 생성 중... (${limitedSections.length}장)`);
     sectionImageResults = await generateSectionImages(limitedSections, contentId);
   } else {
     sectionImageResults = limitedSections.map(() => null);
   }
 
-  // Step 2: Convert each DALL-E image to a Runway AI video clip (with fallback)
-  const hasRunwayKey = !!process.env.RUNWAY_API_KEY;
+  // Step 2: Convert each DALL-E image to an AI video clip using selected engine
+  const engineLabel = videoEngine === 'runway' ? 'Runway' : videoEngine === 'sora' ? 'Sora' : 'Kling';
+
+  // Check engine-specific API keys
+  const hasEngineKey = checkEngineKeys(videoEngine);
   const clipPaths: string[] = [];
-  // Track which sections used static image fallback (need -loop 1 -t in ffmpeg)
   const isStaticImage: boolean[] = [];
+
+  console.log(`[Video] Engine: ${engineLabel}, API key check: ${hasEngineKey ? 'SET' : 'MISSING'}`);
 
   for (let i = 0; i < limitedSections.length; i++) {
     const imageResult = sectionImageResults[i];
     const clipPath = path.join(clipDir, `${contentId}_clip_${i}.mp4`);
     let clipGenerated = false;
 
-    // Try Runway image-to-video if we have an image URL and API key
-    if (hasRunwayKey && imageResult?.imageUrl) {
-      try {
-        const sectionBody = limitedSections[i].body.slice(0, 150).replace(/\n/g, ' ').trim();
-        const runwayPrompt = `Smooth cinematic motion, gentle camera movement, warm lighting. ${sectionBody}`;
+    console.log(`[Video] Section ${i}: imageResult=${imageResult ? 'OK' : 'NULL'}, imageUrl=${imageResult?.imageUrl ? 'YES' : 'NO'}, engine=${engineLabel}`);
 
-        console.log(`[Video] Generating Runway AI video clip ${i + 1}/${limitedSections.length}...`);
-        await generateAIVideo({
-          prompt: runwayPrompt,
-          imageUrl: imageResult.imageUrl,
-          duration: 5,
+    // Update progress for polling
+    updateVideoProgress(
+      contentId,
+      i + 1,
+      limitedSections.length,
+      `${engineLabel} 클립 ${i + 1}/${limitedSections.length} 생성 중...`
+    );
+
+    // Try AI video generation if we have API keys and (optionally) an image URL
+    if (hasEngineKey) {
+      try {
+        const visualPrompt = limitedSections[i].visual_prompt
+          ? `Smooth cinematic motion, gentle camera movement. ${limitedSections[i].visual_prompt}`
+          : `Smooth cinematic motion, gentle camera movement, warm lighting. ${limitedSections[i].body.slice(0, 150).replace(/\n/g, ' ').trim()}`;
+
+        console.log(`[Video] [${engineLabel}] Starting clip ${i + 1}/${limitedSections.length} with prompt: "${visualPrompt.slice(0, 100)}..."`);
+        if (imageResult?.imageUrl) {
+          console.log(`[Video] [${engineLabel}] Image URL: ${imageResult.imageUrl.slice(0, 80)}...`);
+        }
+        console.log(`[Video] [${engineLabel}] Output path: ${clipPath}`);
+
+        const startTime = Date.now();
+
+        await generateVideoClip(videoEngine, {
+          prompt: visualPrompt,
+          imageUrl: imageResult?.imageUrl,
           outputPath: clipPath,
         });
 
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
         if (fs.existsSync(clipPath) && fs.statSync(clipPath).size > 0) {
+          const fileSize = (fs.statSync(clipPath).size / 1024 / 1024).toFixed(2);
           clipPaths.push(clipPath);
           isStaticImage.push(false);
           clipGenerated = true;
-          console.log(`[Video] Runway clip ${i + 1} generated successfully`);
+          console.log(`[Video] [${engineLabel}] Clip ${i + 1} generated successfully (${fileSize}MB, ${elapsed}s)`);
+        } else {
+          console.warn(`[Video] [${engineLabel}] Clip ${i + 1} file missing or empty after generation (${elapsed}s)`);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[Video] Runway failed for section ${i}, falling back to static image: ${msg}`);
+        const stack = err instanceof Error ? err.stack : '';
+        console.warn(`[Video] [${engineLabel}] FAILED for section ${i}: ${msg}`);
+        if (stack) console.warn(`[Video] [${engineLabel}] Stack: ${stack}`);
       }
+    } else {
+      console.log(`[Video] Skipping ${engineLabel} for section ${i}: API keys not configured`);
     }
 
-    // Fallback: use DALL-E static image or solid color
+    // NO FALLBACK: Engine must succeed. Static images are not acceptable.
     if (!clipGenerated) {
-      if (imageResult?.imagePath && fs.existsSync(imageResult.imagePath)) {
-        console.log(`[Video] Using static image fallback for section ${i}`);
-        clipPaths.push(imageResult.imagePath);
-        isStaticImage.push(true);
-      } else {
-        // Generate solid color fallback
-        const fallbackPath = path.join(imageDir, `${contentId}_fallback_${i}.png`);
-        console.log(`[Video] Using solid color fallback for section ${i}`);
-        await generateSolidColorImage(backgroundColor, width, height, fallbackPath);
-        clipPaths.push(fallbackPath);
-        isStaticImage.push(true);
-      }
+      const reason = !hasEngineKey
+        ? getEngineMissingKeyMessage(videoEngine)
+        : `${engineLabel} 영상 생성에 실패했습니다.`;
+      throw new Error(`영상 생성 실패 (섹션 ${i + 1}): ${reason}`);
     }
   }
+
+  const clipCount = clipPaths.length;
+  console.log(`[Video] All ${clipCount} sections generated as ${engineLabel} video clips`);
+
+  // Update progress: merging
+  updateVideoProgress(
+    contentId,
+    limitedSections.length,
+    limitedSections.length,
+    '클립 병합 및 최종 영상 생성 중...'
+  );
 
   // Step 3: Build ffmpeg command to concat clips + audio + subtitles
   const args: string[] = ['-y'];
 
-  // Add each clip/image as input
-  for (let i = 0; i < limitedSections.length; i++) {
-    if (isStaticImage[i]) {
-      // Static image: loop for section duration
-      const duration = Math.max(limitedSections[i].duration_seconds || 5, 1);
-      args.push('-loop', '1', '-t', String(duration), '-i', clipPaths[i]);
-    } else {
-      // Video clip from Runway
-      args.push('-i', clipPaths[i]);
-    }
+  // Add each Kling video clip as input (no static images)
+  for (let i = 0; i < clipPaths.length; i++) {
+    args.push('-i', clipPaths[i]);
   }
 
   // Add audio input
@@ -380,8 +439,8 @@ async function generateSlideshowVideo(
     const subtitlePathEscaped = subtitlePath
       .replace(/\\/g, '/')
       .replace(/:/g, '\\:');
-    const fontName = process.platform === 'win32' ? 'Malgun Gothic Bold' : 'Noto Sans CJK KR Bold';
-    const subtitleFilter = `[vout]subtitles='${subtitlePathEscaped}':force_style='Fontname=${fontName},Fontsize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=120,Alignment=2'[vsub]`;
+    const fontName = process.platform === 'win32' ? 'Malgun Gothic' : 'Noto Sans CJK KR';
+    const subtitleFilter = `[vout]subtitles='${subtitlePathEscaped}':force_style='Fontname=${fontName},Fontsize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BackColour=&H80000000,BorderStyle=4,Outline=0,Shadow=0,MarginV=40,MarginL=40,MarginR=40,Alignment=2'[vsub]`;
     filterParts.push(subtitleFilter);
     finalVideoLabel = '[vsub]';
   }
@@ -476,8 +535,8 @@ async function generateLegacyVideo(
     const subtitlePathEscaped = subtitlePath
       .replace(/\\/g, '/')
       .replace(/:/g, '\\:');
-    const fontName = process.platform === 'win32' ? 'Malgun Gothic Bold' : 'Noto Sans CJK KR Bold';
-    const subtitleFilter = `subtitles='${subtitlePathEscaped}':force_style='Fontname=${fontName},Fontsize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=120,Alignment=2'`;
+    const fontName = process.platform === 'win32' ? 'Malgun Gothic' : 'Noto Sans CJK KR';
+    const subtitleFilter = `subtitles='${subtitlePathEscaped}':force_style='Fontname=${fontName},Fontsize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BackColour=&H80000000,BorderStyle=4,Outline=0,Shadow=0,MarginV=40,MarginL=40,MarginR=40,Alignment=2'`;
 
     if (backgroundImage && fs.existsSync(backgroundImage)) {
       args.push(
@@ -545,6 +604,71 @@ async function generateLegacyVideo(
   }
 }
 
+// ─── Engine Helpers ─────────────────────────────────────────────────────────
+
+function checkEngineKeys(engine: VideoEngine): boolean {
+  switch (engine) {
+    case 'kling':
+      return !!(process.env.KLING_ACCESS_KEY && process.env.KLING_SECRET_KEY);
+    case 'runway':
+      return !!process.env.RUNWAY_API_KEY;
+    case 'sora':
+      return !!(process.env.OPENAI_API_KEY || process.env.REPLICATE_API_TOKEN);
+    default:
+      return false;
+  }
+}
+
+function getEngineMissingKeyMessage(engine: VideoEngine): string {
+  switch (engine) {
+    case 'kling':
+      return 'Kling API 키가 설정되지 않았습니다 (KLING_ACCESS_KEY, KLING_SECRET_KEY)';
+    case 'runway':
+      return 'Runway API 키가 설정되지 않았습니다 (RUNWAY_API_KEY)';
+    case 'sora':
+      return 'Sora API 키가 설정되지 않았습니다 (OPENAI_API_KEY 또는 REPLICATE_API_TOKEN)';
+    default:
+      return 'API 키가 설정되지 않았습니다';
+  }
+}
+
+async function generateVideoClip(
+  engine: VideoEngine,
+  params: { prompt: string; imageUrl?: string; outputPath: string },
+): Promise<void> {
+  switch (engine) {
+    case 'kling':
+      await generateKlingVideo({
+        prompt: params.prompt,
+        imageUrl: params.imageUrl,
+        duration: '5',
+        outputPath: params.outputPath,
+      });
+      break;
+
+    case 'runway':
+      await generateAIVideo({
+        prompt: params.prompt,
+        imageUrl: params.imageUrl,
+        duration: 5,
+        outputPath: params.outputPath,
+      });
+      break;
+
+    case 'sora':
+      await generateSoraVideo({
+        prompt: params.prompt,
+        imageUrl: params.imageUrl,
+        duration: 5,
+        outputPath: params.outputPath,
+      });
+      break;
+
+    default:
+      throw new Error(`Unknown video engine: ${engine}`);
+  }
+}
+
 // ─── Cleanup ───────────────────────────────────────────────────────────────
 
 function cleanupSectionAssets(contentId: number, outBase: string): void {
@@ -560,7 +684,7 @@ function cleanupSectionAssets(contentId: number, outBase: string): void {
       }
     }
 
-    // Cleanup Runway video clips
+    // Cleanup Kling video clips
     const videoDir = path.join(outBase, 'output', 'videos');
     if (fs.existsSync(videoDir)) {
       const videoFiles = fs.readdirSync(videoDir);

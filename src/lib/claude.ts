@@ -58,7 +58,7 @@ export async function generateScript(
 
   const message = await client.messages.create({
     model: 'claude-sonnet-4-20250514',
-    max_tokens: 2048,
+    max_tokens: 8192,
     system: systemPrompt,
     messages: [
       { role: 'user', content: userPrompt },
@@ -100,7 +100,8 @@ export async function generateScript(
       body: shot.body || '',
       duration_seconds: shot.duration_seconds || 2,
       shot_type: shot.shot_type as ScriptSection['shot_type'],
-      visual_prompt: shot.visual_prompt as string | undefined,
+      visual_prompt: shot.visual_prompt || '',
+      visual_description: shot.visual_description || '',
     }));
 
     const voiceoverScript = (parsed.voiceover_script as string) || '';
