@@ -97,14 +97,14 @@ const VISUAL_PROMPT_GUIDELINES = `
 
 중요 (반드시 지켜야 할 규칙):
 - body는 순수 나레이션 텍스트만 작성하세요. [후킹], [핵심정보], (효과음) 같은 태그, 괄호, 구조 표시를 절대 포함하지 마세요. TTS가 이 텍스트를 그대로 읽습니다.
-- visual_prompt는 반드시 영어로 작성하세요. DALL-E와 Kling AI가 이해할 수 있는 구체적인 영상/이미지 생성 프롬프트입니다.
-  - 음식 재료가 캐릭터화되어 움직이는 애니메이션 스타일 장면
-  - 또는 전문적인 푸드 포토그래피 스타일
+- visual_scenario는 영상 전체를 아우르는 하나의 통합 비주얼 시나리오입니다. 반드시 영어로 작성하세요. DALL-E와 Kling AI가 이해할 수 있는 구체적인 영상/이미지 생성 프롬프트입니다.
+  - 섹션/샷별로 나누지 말고, 영상 전체의 일관된 시각적 스타일과 분위기를 하나의 프롬프트로 묘사
+  - 음식 재료가 캐릭터화되어 움직이는 애니메이션 스타일, 또는 전문적인 푸드 포토그래피 스타일 등 전체 톤을 명시
   - 카메라 앵글(close-up, overhead, eye-level), 조명(warm, natural, studio), 분위기(cozy, vibrant, professional)를 구체적으로 묘사
   - 캐릭터나 동작이 있다면 구체적으로 묘사 (예: "garlic character wearing a cape, punching virus monsters")
   - 항상 "vertical 9:16 format"을 마지막에 포함
   - "No text overlay"를 포함
-- visual_description은 한국어로 해당 장면이 시각적으로 어떻게 보여야 하는지 설명
+- visual_description은 한국어로 해당 장면이 시각적으로 어떻게 보여야 하는지 설명 (섹션별로 작성)
 - title은 내부 참조용이며 TTS에 읽히지 않습니다. 간결하게 섹션 역할을 표시하세요 (예: "후킹", "핵심정보1", "마무리")`.trim();
 
 const PROMPTS: Record<ContentType, Record<Language, string>> = {
@@ -248,9 +248,11 @@ export function buildUserPrompt(
     additionalInstructions?: string;
     videoLength?: VideoLength;
     adConfig?: AdConfig;
+    visual_scenario?: string;
+    seriesInfo?: { name: string; episode: number; prefix: string };
   } = {}
 ): string {
-  const { keywords = [], additionalInstructions, videoLength = 60, adConfig } = options;
+  const { keywords = [], additionalInstructions, videoLength = 60, adConfig, visual_scenario, seriesInfo } = options;
 
   let prompt = `주제: ${topic}`;
   prompt += `\n영상 길이: ${videoLength}초`;
@@ -276,6 +278,17 @@ export function buildUserPrompt(
     prompt += `\n추가 지시사항: ${additionalInstructions}`;
   }
 
+  if (visual_scenario) {
+    prompt += `\n\n[영상 시나리오 — 전체 영상에 적용]\n${visual_scenario}`;
+  }
+
+  if (seriesInfo) {
+    prompt += `\n\n[시리즈 정보]`;
+    prompt += `\n시리즈명: ${seriesInfo.name}`;
+    prompt += `\n에피소드: ${seriesInfo.prefix}${seriesInfo.episode}`;
+    prompt += `\n이전 에피소드의 톤과 비주얼 스타일을 유지하면서 새로운 주제를 다룹니다.`;
+  }
+
   // Determine if this is an ad format (shot-based) or content format (section-based)
   const isAdFormat = videoLength <= 30 || (adConfig !== undefined);
 
@@ -286,6 +299,7 @@ export function buildUserPrompt(
 
 {
   "title": "광고 제목",
+  "visual_scenario": "영상 전체의 통합 비주얼 시나리오 (영어) — 전체 영상에 일관되게 적용되는 스타일/분위기/조명/카메라 묘사, vertical 9:16 format, No text overlay",
   "hooks": ["훅 문장 1", "훅 문장 2", "훅 문장 3"],
   "shot_list": [
     {
@@ -293,8 +307,7 @@ export function buildUserPrompt(
       "title": "샷 설명 (예: 제품 클로즈업)",
       "body": "이 샷의 내레이션/자막 텍스트 (짧게!)",
       "duration_seconds": 2,
-      "shot_type": "product_closeup",
-      "visual_prompt": "이 샷의 영상 생성용 프롬프트 (영어)"
+      "shot_type": "product_closeup"
     }
   ],
   "voiceover_script": "전체 내레이션 대본 (매우 간결하게)",
@@ -305,8 +318,9 @@ export function buildUserPrompt(
 }
 
 중요:
+- visual_scenario는 영상 전체에 적용되는 하나의 통합 프롬프트입니다. 샷별로 나누지 마세요.
+- visual_scenario는 영어로, 영상 생성 AI에 바로 입력 가능한 형태로 작성하세요.
 - shot_type은 반드시 product_closeup, texture_macro, lifestyle, benefit_frame, endcard 중 하나
-- visual_prompt은 영어로, 영상 생성 AI에 바로 입력 가능한 형태로
 - 내레이션/자막은 ${videoLength}초에 맞게 매우 간결하게 (${videoLength <= 15 ? '2-3문장 이내' : '핵심만'})
 - 각 샷의 duration_seconds 합이 ${videoLength}초가 되어야 함`;
   } else {
@@ -316,12 +330,12 @@ export function buildUserPrompt(
 
 {
   "title": "영상 제목",
+  "visual_scenario": "영상 전체의 통합 비주얼 시나리오 (영어) — 전체 영상에 일관되게 적용되는 스타일/분위기/조명/카메라 묘사, vertical 9:16 format, No text overlay",
   "sections": [
     {
       "order": 1,
       "title": "섹션 제목 (내부 참조용, 예: 후킹, 핵심정보1)",
       "body": "나레이션 대본 (순수 텍스트만, 태그/괄호 절대 금지)",
-      "visual_prompt": "English visual prompt for DALL-E/Kling (camera angle, lighting, mood, action, characters, vertical 9:16 format, No text overlay)",
       "visual_description": "한국어 시각 연출 설명 (이 장면이 어떻게 보여야 하는지)",
       "duration_seconds": 5
     }
@@ -330,7 +344,9 @@ export function buildUserPrompt(
   "tags": ["태그1", "태그2"]
 }
 
-주의: body에는 절대로 [후킹], [핵심정보] 같은 태그를 넣지 마세요. TTS가 그대로 읽습니다.`;
+주의:
+- body에는 절대로 [후킹], [핵심정보] 같은 태그를 넣지 마세요. TTS가 그대로 읽습니다.
+- visual_scenario는 영상 전체에 적용되는 하나의 통합 프롬프트입니다. 섹션별로 나누지 마세요.`;
   }
 
   return prompt;

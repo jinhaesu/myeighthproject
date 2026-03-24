@@ -14,6 +14,7 @@ export interface ScriptGenerationResult {
   ctaOptions?: string[];
   voiceoverScript?: string;
   subtitles?: string[];
+  visualScenario?: string;
 }
 
 // ─── Client ─────────────────────────────────────────────────────────────────
@@ -37,6 +38,8 @@ export async function generateScript(
     additionalInstructions?: string;
     videoLength?: VideoLength;
     adConfig?: AdConfig;
+    visual_scenario?: string;
+    seriesInfo?: { name: string; episode: number; prefix: string };
   } = {}
 ): Promise<ScriptGenerationResult> {
   const {
@@ -45,6 +48,8 @@ export async function generateScript(
     additionalInstructions,
     videoLength = 60,
     adConfig,
+    visual_scenario,
+    seriesInfo,
   } = options;
 
   const client = getClient();
@@ -54,6 +59,8 @@ export async function generateScript(
     additionalInstructions,
     videoLength,
     adConfig,
+    visual_scenario,
+    seriesInfo,
   });
 
   const message = await client.messages.create({
@@ -86,6 +93,8 @@ export async function generateScript(
     throw new Error(`Failed to parse Claude response as JSON: ${rawText.slice(0, 200)}`);
   }
 
+  const visualScenario = (parsed.visual_scenario as string) || undefined;
+
   if (isAdFormat) {
     // Ad format: shot_list based
     const shotList = parsed.shot_list as ScriptSection[] | undefined;
@@ -100,7 +109,6 @@ export async function generateScript(
       body: shot.body || '',
       duration_seconds: shot.duration_seconds || 2,
       shot_type: shot.shot_type as ScriptSection['shot_type'],
-      visual_prompt: shot.visual_prompt || '',
       visual_description: shot.visual_description || '',
     }));
 
@@ -126,6 +134,7 @@ export async function generateScript(
       ctaOptions: (parsed.cta_options as string[]) || [],
       voiceoverScript,
       subtitles: (parsed.subtitles as string[]) || [],
+      visualScenario,
     };
   } else {
     // Content format: sections based
@@ -150,6 +159,7 @@ export async function generateScript(
       fullScript,
       tags: (parsed.tags as string[]) || [],
       totalDuration: (parsed.total_duration_seconds as number) || totalDuration,
+      visualScenario,
     };
   }
 }

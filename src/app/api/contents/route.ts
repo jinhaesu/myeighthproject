@@ -27,6 +27,9 @@ interface ContentRow {
   ad_config: string | null;
   hooks: string | null;
   cta_options: string | null;
+  template_id: number | null;
+  series_episode: number | null;
+  visual_scenario: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -120,17 +123,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const extBody = body as CreateContentRequest & {
+      template_id?: number;
+      series_episode?: number;
+      visual_scenario?: string;
+    };
+
     const result = run(
-      `INSERT INTO contents (title, content_type, language, scheduled_date, tags, video_length, ad_config)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO contents
+         (title, content_type, language, scheduled_date, tags, video_length, ad_config,
+          template_id, series_episode, visual_scenario)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        body.title,
-        body.content_type,
-        body.language || 'ko',
-        body.scheduled_date || null,
-        body.tags ? JSON.stringify(body.tags) : null,
-        body.video_length || null,
-        body.ad_config ? JSON.stringify(body.ad_config) : null,
+        extBody.title,
+        extBody.content_type,
+        extBody.language || 'ko',
+        extBody.scheduled_date || null,
+        extBody.tags ? JSON.stringify(extBody.tags) : null,
+        extBody.video_length || null,
+        extBody.ad_config ? JSON.stringify(extBody.ad_config) : null,
+        extBody.template_id ?? null,
+        extBody.series_episode ?? null,
+        extBody.visual_scenario ?? null,
       ]
     );
 

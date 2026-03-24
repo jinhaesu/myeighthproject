@@ -28,6 +28,7 @@ import type {
   PlatformAccount,
   Platform,
   VideoEngine,
+  PlanningTemplate,
 } from '@/types';
 
 // ─── Avatar Types ───────────────────────────────────────────────────────────
@@ -209,6 +210,22 @@ export default function CreatePage() {
   const [topic, setTopic] = useState('');
   const [language, setLanguage] = useState<Language>('ko');
 
+  // ── Template state ──
+  const [templates, setTemplates] = useState<PlanningTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+  const [showTemplateSave, setShowTemplateSave] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [templateDesc, setTemplateDesc] = useState('');
+
+  // ── Series state ──
+  const [seriesEnabled, setSeriesEnabled] = useState(false);
+  const [seriesName, setSeriesName] = useState('');
+  const [seriesPrefix, setSeriesPrefix] = useState('EP');
+  const [seriesEpisode, setSeriesEpisode] = useState(1);
+
+  // ── Visual scenario (unified for entire video) ──
+  const [visualScenario, setVisualScenario] = useState('');
+
   // Ad-specific fields (raw form state, converted to AdConfig on submit)
   const [adProductName, setAdProductName] = useState('');
   const [adCategory, setAdCategory] = useState('bakery');
@@ -283,6 +300,66 @@ export default function CreatePage() {
       loadAvatars();
     }
   }, [currentStep, videoType, loadAvatars]);
+
+  // Load templates on mount
+  useEffect(() => {
+    apiGet<PlanningTemplate[]>('/api/templates')
+      .then((res) => { if (res.data) setTemplates(res.data); })
+      .catch(() => {});
+  }, []);
+
+  // Apply template to form
+  function applyTemplate(tpl: PlanningTemplate) {
+    setSelectedTemplateId(tpl.id);
+    setContentType(tpl.content_type);
+    setVideoLength(tpl.video_length);
+    setLanguage(tpl.language);
+    if (tpl.visual_scenario) setVisualScenario(tpl.visual_scenario);
+    if (tpl.series_enabled) {
+      setSeriesEnabled(true);
+      setSeriesName(tpl.series_name || '');
+      setSeriesPrefix(tpl.series_prefix || 'EP');
+    }
+    if (tpl.ad_config) {
+      setAdProductName(tpl.ad_config.product_name || '');
+      setAdCategory(tpl.ad_config.category || 'bakery');
+      setAdBenefitsRaw(tpl.ad_config.benefits?.join(', ') || '');
+      setAdTargetAudience(tpl.ad_config.target_audience || '');
+      setAdTone(tpl.ad_config.tone || '');
+      setAdChannels(tpl.ad_config.channels || []);
+      setAdConstraintsRaw(tpl.ad_config.constraints?.join(', ') || '');
+    }
+  }
+
+  // Save current settings as template
+  async function handleSaveTemplate() {
+    if (!templateName.trim()) return;
+    try {
+      const adConfig = isAdType(contentType) ? buildAdConfig() : undefined;
+      const res = await apiPost<PlanningTemplate>('/api/templates', {
+        name: templateName,
+        description: templateDesc,
+        content_type: contentType,
+        video_length: videoLength,
+        language,
+        ad_config: adConfig,
+        visual_scenario: visualScenario,
+        tone_keywords: adConfig?.tone ? adConfig.tone.split(',').map((s: string) => s.trim()) : [],
+        series_enabled: seriesEnabled,
+        series_name: seriesEnabled ? seriesName : undefined,
+        series_prefix: seriesEnabled ? seriesPrefix : undefined,
+      });
+      if (res.data) {
+        setTemplates((prev) => [...prev, res.data!]);
+        setSelectedTemplateId(res.data.id);
+        setShowTemplateSave(false);
+        setTemplateName('');
+        setTemplateDesc('');
+      }
+    } catch {
+      setError('템플릿 저장 실패');
+    }
+  }
 
   const progressPercent = ((currentStep - 1) / STEPS.length) * 100;
   const isAd = isAdType(contentType);
@@ -363,11 +440,14 @@ export default function CreatePage() {
         shots?: AdShot[];
         hooks?: string[];
         cta_options?: string[];
+        visualScenario?: string;
       }>('/api/generate/script', {
         content_id: contentId,
         topic,
         video_length: videoLength,
         ...(adConfig ? { ad_config: adConfig } : {}),
+        ...(visualScenario ? { visual_scenario: visualScenario } : {}),
+        ...(seriesEnabled && seriesName ? { series_info: { name: seriesName, episode: seriesEpisode, prefix: seriesPrefix } } : {}),
       });
       if (res.data) {
         setScript(res.data.fullScript ?? '');
@@ -376,6 +456,7 @@ export default function CreatePage() {
         setShots(res.data.shots ?? []);
         setHooks(res.data.hooks ?? []);
         setCtaOptions(res.data.cta_options ?? []);
+        if (res.data.visualScenario) setVisualScenario(res.data.visualScenario);
         if (res.data.hooks?.length) setSelectedHook(res.data.hooks[0]);
         if (res.data.cta_options?.length) setSelectedCta(res.data.cta_options[0]);
         setScriptGenerated(true);
@@ -643,6 +724,49 @@ export default function CreatePage() {
             </p>
           </div>
 
+          {/* ── Template Selector ── */}
+          {templates.length > 0 && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-[#111827]">기획 템플릿 불러오기</label>
+              <p className="text-xs text-[#6b7280]">저장된 템플릿을 선택하면 유형, 길이, 제품 정보, 시나리오가 자동으로 채워집니다</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {templates.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    onClick={() => applyTemplate(tpl)}
+                    className={cn(
+                      'text-left rounded-xl border px-4 py-3 transition-all duration-200',
+                      selectedTemplateId === tpl.id
+                        ? 'border-[#1a5c2e] bg-green-50 shadow-sm'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    )}
+                  >
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className={cn('text-sm font-semibold', selectedTemplateId === tpl.id ? 'text-[#1a5c2e]' : 'text-[#111827]')}>
+                        {tpl.name}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] bg-gray-100 text-[#6b7280] px-1.5 py-0.5 rounded-full">
+                          {contentTypeLabel(tpl.content_type)}
+                        </span>
+                        <span className="text-[10px] bg-gray-100 text-[#6b7280] px-1.5 py-0.5 rounded-full">
+                          {tpl.video_length}초
+                        </span>
+                        {tpl.series_enabled && (
+                          <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">시리즈</span>
+                        )}
+                      </div>
+                    </div>
+                    {tpl.description && (
+                      <p className="text-xs text-[#6b7280] line-clamp-1">{tpl.description}</p>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* ── Content Type ── */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-[#111827]">
@@ -872,6 +996,74 @@ export default function CreatePage() {
             </div>
           )}
 
+          {/* ── Visual Scenario (unified) ── */}
+          <div className="space-y-2">
+            <label htmlFor="visual-scenario" className="text-sm font-medium text-[#111827]">
+              영상 시나리오
+              <span className="text-xs text-[#6b7280] font-normal ml-2">(전체 영상에 적용될 하나의 비주얼 컨셉)</span>
+            </label>
+            <p className="text-xs text-[#6b7280]">
+              이 시나리오가 영상 전체의 분위기, 조명, 카메라 앵글을 결정합니다. 비워두면 AI가 자동 생성합니다.
+            </p>
+            <textarea
+              id="visual-scenario"
+              value={visualScenario}
+              onChange={(e) => setVisualScenario(e.target.value)}
+              placeholder="예: Premium food photography style, warm studio lighting, clean white marble table, soft depth of field, vertical 9:16 format, no text overlay"
+              className="w-full rounded-xl border border-amber-200 bg-amber-50/30 px-4 py-3 text-sm text-[#374151] font-mono placeholder:text-gray-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/10 transition-all resize-y min-h-[80px]"
+            />
+          </div>
+
+          {/* ── Series Settings ── */}
+          <div className="border border-gray-200 rounded-xl p-4 space-y-4 bg-gray-50/50">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-[#111827]">시리즈(연속물) 설정</p>
+                <p className="text-xs text-[#6b7280] mt-0.5">같은 컨셉으로 에피소드별 영상을 이어서 제작합니다</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={seriesEnabled}
+                  onChange={(e) => setSeriesEnabled(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-[#1a5c2e]/20 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#1a5c2e]" />
+              </label>
+            </div>
+            {seriesEnabled && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                <div className="sm:col-span-2">
+                  <FieldInput
+                    id="series-name"
+                    label="시리즈명"
+                    value={seriesName}
+                    onChange={(e) => setSeriesName(e.target.value)}
+                    placeholder="예: 널담 건강 시리즈"
+                    required
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <FieldInput
+                    id="series-prefix"
+                    label="접두사"
+                    value={seriesPrefix}
+                    onChange={(e) => setSeriesPrefix(e.target.value)}
+                    placeholder="EP"
+                  />
+                  <FieldInput
+                    id="series-episode"
+                    label="회차"
+                    type="number"
+                    min={1}
+                    value={seriesEpisode}
+                    onChange={(e) => setSeriesEpisode(parseInt(e.target.value) || 1)}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* ── Next button ── */}
           <div className="flex justify-end pt-2">
             <Button onClick={handleStep1Submit} disabled={loading} size="lg">
@@ -898,14 +1090,67 @@ export default function CreatePage() {
           ════════════════════════════════════════════════════════ */}
       {currentStep === 2 && (
         <Card className="space-y-6 animate-fade-in">
-          <div>
-            <h2 className="text-lg font-semibold text-[#111827]">스크립트 & 샷리스트</h2>
-            <p className="text-sm text-[#6b7280] mt-1">
-              {isAd
-                ? 'AI가 광고 샷 구성, 훅, CTA를 포함한 스크립트를 생성합니다'
-                : 'AI가 주제에 맞는 섹션별 스크립트를 작성합니다'}
-            </p>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-[#111827]">스크립트 & 샷리스트</h2>
+              <p className="text-sm text-[#6b7280] mt-1">
+                {isAd
+                  ? 'AI가 광고 샷 구성, 훅, CTA를 포함한 스크립트를 생성합니다'
+                  : 'AI가 주제에 맞는 섹션별 스크립트를 작성합니다'}
+              </p>
+              {seriesEnabled && seriesName && (
+                <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                  </svg>
+                  시리즈: {seriesName} &middot; {seriesPrefix}{seriesEpisode}
+                </p>
+              )}
+            </div>
+            {/* Save as template button */}
+            {scriptGenerated && (
+              <button
+                type="button"
+                onClick={() => setShowTemplateSave(!showTemplateSave)}
+                className="shrink-0 inline-flex items-center gap-1.5 text-xs font-medium text-[#1a5c2e] bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-all"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                </svg>
+                템플릿으로 저장
+              </button>
+            )}
           </div>
+
+          {/* ── Save as template form ── */}
+          {showTemplateSave && (
+            <div className="border border-green-200 rounded-xl p-4 bg-green-50/50 space-y-3 animate-fade-in">
+              <p className="text-sm font-medium text-[#1a5c2e]">현재 설정을 기획 템플릿으로 저장</p>
+              <p className="text-xs text-[#6b7280]">다음에 같은 설정으로 빠르게 시작하거나 시리즈 연속물로 제작할 수 있습니다</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <FieldInput
+                  id="template-name"
+                  label="템플릿 이름"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  placeholder="예: 널담 15초 제품 광고"
+                  required
+                />
+                <FieldInput
+                  id="template-desc"
+                  label="설명 (선택)"
+                  value={templateDesc}
+                  onChange={(e) => setTemplateDesc(e.target.value)}
+                  placeholder="예: 고단백 베이글 시리즈용"
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button size="sm" onClick={handleSaveTemplate} disabled={!templateName.trim()}>
+                  저장
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* ── Before generation: generate button ── */}
           {!scriptGenerated ? (
@@ -1017,25 +1262,6 @@ export default function CreatePage() {
                             className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-[#111827] leading-relaxed focus:border-[#1a5c2e] focus:outline-none focus:ring-2 focus:ring-[#1a5c2e]/10 transition-all resize-y min-h-[60px]"
                           />
                         </div>
-                        <div>
-                          <p className="text-xs font-medium text-amber-600 mb-1 flex items-center gap-1">
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            </svg>
-                            영상 시나리오 (영어 - DALL-E/Kling 프롬프트)
-                          </p>
-                          <textarea
-                            value={section.visual_prompt}
-                            onChange={(e) => {
-                              const updated = [...scriptSections];
-                              updated[idx] = { ...updated[idx], visual_prompt: e.target.value };
-                              setScriptSections(updated);
-                              setSectionsDirty(true);
-                            }}
-                            placeholder="e.g. Cute animated garlic character bouncing..."
-                            className="w-full rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-[#374151] leading-relaxed font-mono focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/10 transition-all resize-y min-h-[50px]"
-                          />
-                        </div>
                         {section.visual_description && (
                           <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
                             <p className="text-xs font-medium text-blue-600 mb-1 flex items-center gap-1">
@@ -1063,6 +1289,26 @@ export default function CreatePage() {
                   className="min-h-[200px] font-mono text-sm"
                 />
               )}
+
+              {/* ── Unified Visual Scenario ── */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                  <h3 className="text-sm font-semibold text-[#111827]">영상 시나리오</h3>
+                  <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">전체 영상 1개</span>
+                </div>
+                <p className="text-xs text-[#6b7280]">
+                  이 시나리오 하나가 영상 전체의 비주얼 스타일을 결정합니다. 편집하여 원하는 분위기로 조정하세요.
+                </p>
+                <textarea
+                  value={visualScenario}
+                  onChange={(e) => setVisualScenario(e.target.value)}
+                  placeholder="AI가 생성한 시나리오가 여기에 표시됩니다..."
+                  className="w-full rounded-xl border border-amber-200 bg-amber-50/30 px-4 py-3 text-sm text-[#374151] font-mono placeholder:text-gray-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/10 transition-all resize-y min-h-[100px]"
+                />
+              </div>
 
               {/* ── Shot list (for ads or short-form <=30s) ── */}
               {(isAd || videoLength <= 30) && shots.length > 0 && (
