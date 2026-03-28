@@ -1637,14 +1637,20 @@ export default function CreatePage() {
                       const prompt = visualScenario
                         ? `${visualScenario}. Scene: ${sec.visual_description || sec.title}`
                         : `Korean health food brand commercial shot. ${sec.visual_description || sec.title}. Premium food photography, clean background, vertical 9:16 format.`;
-                      const res = await apiPost<{ imageUrl: string }>('/api/generate/image', {
+                      const res = await apiPost<{ imagePath: string; imageUrl: string }>('/api/generate/image', {
                         content_id: contentId,
                         prompt,
                         size: '1024x1792',
+                        section_index: i,
                       });
-                      if (res.data?.imageUrl) {
+                      const imgPath = res.data?.imagePath || res.data?.imageUrl;
+                      if (imgPath) {
                         setKeyVisuals((prev) =>
-                          prev.map((kv, idx) => idx === i ? { ...kv, imageUrl: res.data!.imageUrl, generating: false } : kv)
+                          prev.map((kv, idx) => idx === i ? { ...kv, imageUrl: imgPath, generating: false } : kv)
+                        );
+                      } else {
+                        setKeyVisuals((prev) =>
+                          prev.map((kv, idx) => idx === i ? { ...kv, generating: false } : kv)
                         );
                       }
                     } catch (err) {
@@ -1727,14 +1733,20 @@ export default function CreatePage() {
                             const prompt = visualScenario
                               ? `${visualScenario}. Scene: ${sec.visual_description || sec.title}`
                               : `Korean health food brand commercial shot. ${sec.visual_description || sec.title}. Premium food photography.`;
-                            const res = await apiPost<{ imageUrl: string }>('/api/generate/image', {
+                            const res = await apiPost<{ imagePath: string; imageUrl: string }>('/api/generate/image', {
                               content_id: contentId,
                               prompt,
                               size: '1024x1792',
+                              section_index: idx,
                             });
-                            if (res.data?.imageUrl) {
+                            const imgPath = res.data?.imagePath || res.data?.imageUrl;
+                            if (imgPath) {
                               setKeyVisuals((prev) =>
-                                prev.map((k, i) => i === idx ? { ...k, imageUrl: res.data!.imageUrl, generating: false } : k)
+                                prev.map((k, i) => i === idx ? { ...k, imageUrl: imgPath, generating: false } : k)
+                              );
+                            } else {
+                              setKeyVisuals((prev) =>
+                                prev.map((k, i) => i === idx ? { ...k, generating: false } : k)
                               );
                             }
                           } catch {
