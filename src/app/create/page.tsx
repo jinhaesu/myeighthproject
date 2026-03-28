@@ -98,11 +98,16 @@ const STEPS = [
   },
   {
     number: 3,
-    label: '영상 생성',
-    subtitle: '스크립트와 음성을 결합하여 영상을 제작합니다',
+    label: '키 비주얼 생성',
+    subtitle: '각 섹션의 대표 이미지를 먼저 생성하고 확인합니다',
   },
   {
     number: 4,
+    label: '영상 생성',
+    subtitle: '확인된 이미지를 기반으로 영상을 제작합니다',
+  },
+  {
+    number: 5,
     label: '배포 예약',
     subtitle: '플랫폼과 일정을 선택하여 배포를 예약합니다',
   },
@@ -257,7 +262,11 @@ export default function CreatePage() {
   const [sectionsDirty, setSectionsDirty] = useState(false);
   const [sectionsSaving, setSectionsSaving] = useState(false);
 
-  // ── Step 3 state ──
+  // ── Step 3 state (Key Visuals) ──
+  const [keyVisuals, setKeyVisuals] = useState<Array<{ sectionIndex: number; imageUrl: string | null; generating: boolean }>>([]);
+  const [keyVisualsReady, setKeyVisualsReady] = useState(false);
+
+  // ── Step 4 state (Video) ──
   const [videoType, setVideoType] = useState<'slideshow' | 'heygen'>('heygen');
   const [videoEngine, setVideoEngine] = useState<VideoEngine>('kling');
   const [videoPath, setVideoPath] = useState<string | null>(null);
@@ -296,7 +305,7 @@ export default function CreatePage() {
   }, [avatars.length]);
 
   useEffect(() => {
-    if (currentStep === 3 && videoType === 'heygen') {
+    if (currentStep === 4 && videoType === 'heygen') {
       loadAvatars();
     }
   }, [currentStep, videoType, loadAvatars]);
@@ -492,6 +501,9 @@ export default function CreatePage() {
         tts_provider: ttsProvider,
       });
       setAudioGenerated(true);
+      // Initialize key visuals for each section
+      const secs = scriptSections.length > 0 ? scriptSections : sections;
+      setKeyVisuals(secs.map((_, idx) => ({ sectionIndex: idx, imageUrl: null, generating: false })));
       setCurrentStep(3);
     } catch (err) {
       setError(err instanceof Error ? err.message : '음성 생성 실패');
@@ -509,7 +521,7 @@ export default function CreatePage() {
     };
   }, []);
 
-  // ── Step 3: Generate video (async with polling) ──
+  // ── Step 4: Generate video (async with polling) ──
   async function handleGenerateVideo() {
     if (!contentId) return;
     setError(null);
@@ -530,17 +542,19 @@ export default function CreatePage() {
           avatar_id: selectedAvatarId,
         });
       } else {
-        // Slideshow (DALL-E + AI Engine) - fire async request
+        // Slideshow (Image-to-Video) - pass pre-generated key visual URLs
+        const secs = scriptSections.length > 0 ? scriptSections : sections;
+        const sectionsWithImages = secs.map((s, idx) => ({
+          body: s.body,
+          visual_prompt: s.visual_prompt,
+          duration_seconds: s.duration_seconds,
+          image_url: keyVisuals[idx]?.imageUrl || undefined,
+        }));
         await apiPost('/api/generate/video', {
           content_id: contentId,
           video_engine: videoEngine,
-          sections: scriptSections.length > 0
-            ? scriptSections.map(s => ({
-                body: s.body,
-                visual_prompt: s.visual_prompt,
-                duration_seconds: s.duration_seconds,
-              }))
-            : undefined,
+          generate_images: !keyVisualsReady, // skip DALL-E if we already have images
+          sections: sectionsWithImages,
         });
       }
 
@@ -1572,13 +1586,233 @@ export default function CreatePage() {
       )}
 
       {/* ════════════════════════════════════════════════════════
-          STEP 3: 영상 생성
+          STEP 3: 키 비주얼 생성
           ════════════════════════════════════════════════════════ */}
       {currentStep === 3 && (
         <Card className="space-y-6 animate-fade-in">
           <div>
+            <h2 className="text-lg font-semibold text-[#111827]">키 비주얼 생성</h2>
+            <p className="text-sm text-[#6b7280] mt-1">
+              각 섹션의 대표 이미지를 먼저 생성합니다. 이미지를 확인하고 마음에 들면 영상 생성으로 넘어가세요.
+            </p>
+            <p className="text-xs text-amber-600 mt-2 flex items-center gap-1.5">
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              이미지를 먼저 고정하면 영상의 변화 폭이 줄어들어 일관된 결과물을 얻을 수 있습니다.
+            </p>
+          </div>
+
+          {/* Visual Scenario (read-only summary) */}
+          {visualScenario && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+              <p className="text-xs font-medium text-amber-700 mb-1">적용 중인 영상 시나리오</p>
+              <p className="text-xs text-amber-800 font-mono leading-relaxed">{visualScenario}</p>
+            </div>
+          )}
+
+          {/* Section-by-section image generation */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-[#111827]">
+                섹션별 키 비주얼
+                <span className="text-xs text-[#6b7280] font-normal ml-2">
+                  ({keyVisuals.filter((kv) => kv.imageUrl).length}/{keyVisuals.length} 완료)
+                </span>
+              </h3>
+              <Button
+                size="sm"
+                disabled={loading || keyVisuals.every((kv) => kv.generating)}
+                onClick={async () => {
+                  const secs = scriptSections.length > 0 ? scriptSections : sections;
+                  setLoading(true);
+                  setError(null);
+                  for (let i = 0; i < secs.length; i++) {
+                    if (keyVisuals[i]?.imageUrl) continue; // skip already generated
+                    setKeyVisuals((prev) =>
+                      prev.map((kv, idx) => idx === i ? { ...kv, generating: true } : kv)
+                    );
+                    try {
+                      const sec = secs[i];
+                      const prompt = visualScenario
+                        ? `${visualScenario}. Scene: ${sec.visual_description || sec.title}`
+                        : `Korean health food brand commercial shot. ${sec.visual_description || sec.title}. Premium food photography, clean background, vertical 9:16 format.`;
+                      const res = await apiPost<{ imageUrl: string }>('/api/generate/image', {
+                        content_id: contentId,
+                        prompt,
+                        size: '1024x1792',
+                      });
+                      if (res.data?.imageUrl) {
+                        setKeyVisuals((prev) =>
+                          prev.map((kv, idx) => idx === i ? { ...kv, imageUrl: res.data!.imageUrl, generating: false } : kv)
+                        );
+                      }
+                    } catch (err) {
+                      setKeyVisuals((prev) =>
+                        prev.map((kv, idx) => idx === i ? { ...kv, generating: false } : kv)
+                      );
+                      setError(`섹션 ${i + 1} 이미지 생성 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`);
+                    }
+                  }
+                  setLoading(false);
+                  setKeyVisualsReady(true);
+                }}
+              >
+                {loading ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    이미지 생성 중...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    전체 이미지 일괄 생성
+                  </>
+                )}
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {keyVisuals.map((kv, idx) => {
+                const secs = scriptSections.length > 0 ? scriptSections : sections;
+                const sec = secs[idx];
+                if (!sec) return null;
+                return (
+                  <div key={idx} className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+                    {/* Section header */}
+                    <div className="bg-gray-50 px-4 py-2 border-b border-gray-100 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-[#374151]">
+                        {sec.order || idx + 1}. {sec.title}
+                      </span>
+                      <span className="text-[10px] text-[#6b7280] bg-gray-100 px-1.5 py-0.5 rounded-full">
+                        {sec.duration_seconds}초
+                      </span>
+                    </div>
+
+                    {/* Image area */}
+                    <div className="aspect-[9/16] bg-gray-100 relative flex items-center justify-center max-h-[280px]">
+                      {kv.imageUrl ? (
+                        <img
+                          src={getFileUrl(kv.imageUrl)}
+                          alt={`섹션 ${idx + 1} 키 비주얼`}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : kv.generating ? (
+                        <div className="flex flex-col items-center gap-2">
+                          <div className="w-8 h-8 border-[3px] border-gray-200 border-t-[#22c55e] rounded-full animate-spin" />
+                          <p className="text-xs text-[#6b7280]">생성 중...</p>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-2 text-gray-300">
+                          <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          <p className="text-xs">미생성</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Actions */}
+                    <div className="p-3 flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={kv.generating || loading}
+                        onClick={async () => {
+                          setKeyVisuals((prev) =>
+                            prev.map((k, i) => i === idx ? { ...k, generating: true } : k)
+                          );
+                          try {
+                            const prompt = visualScenario
+                              ? `${visualScenario}. Scene: ${sec.visual_description || sec.title}`
+                              : `Korean health food brand commercial shot. ${sec.visual_description || sec.title}. Premium food photography.`;
+                            const res = await apiPost<{ imageUrl: string }>('/api/generate/image', {
+                              content_id: contentId,
+                              prompt,
+                              size: '1024x1792',
+                            });
+                            if (res.data?.imageUrl) {
+                              setKeyVisuals((prev) =>
+                                prev.map((k, i) => i === idx ? { ...k, imageUrl: res.data!.imageUrl, generating: false } : k)
+                              );
+                            }
+                          } catch {
+                            setKeyVisuals((prev) =>
+                              prev.map((k, i) => i === idx ? { ...k, generating: false } : k)
+                            );
+                          }
+                        }}
+                        className="text-xs text-[#1a5c2e] hover:text-[#144723] font-medium flex items-center gap-1"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        {kv.imageUrl ? '다시 생성' : '개별 생성'}
+                      </button>
+                      {sec.visual_description && (
+                        <span className="text-[10px] text-[#6b7280] truncate flex-1 text-right" title={sec.visual_description}>
+                          {sec.visual_description}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Navigation */}
+          <div className="flex items-center justify-between pt-2">
+            <Button variant="secondary" onClick={() => setCurrentStep(2)}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              스크립트로 돌아가기
+            </Button>
+            <Button
+              onClick={() => setCurrentStep(4)}
+              disabled={keyVisuals.length === 0}
+            >
+              {keyVisualsReady ? (
+                <>
+                  영상 생성으로
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </>
+              ) : (
+                <>
+                  이미지 없이 영상 생성으로
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                  </svg>
+                </>
+              )}
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/* ════════════════════════════════════════════════════════
+          STEP 4: 영상 생성
+          ════════════════════════════════════════════════════════ */}
+      {currentStep === 4 && (
+        <Card className="space-y-6 animate-fade-in">
+          <div>
             <h2 className="text-lg font-semibold text-[#111827]">영상 생성</h2>
             <p className="text-sm text-[#6b7280] mt-1">영상 타입을 선택하고 생성합니다</p>
+            {keyVisualsReady && keyVisuals.some((kv) => kv.imageUrl) && (
+              <div className="mt-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 flex items-center gap-2">
+                <svg className="w-4 h-4 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                <p className="text-xs text-green-700">
+                  키 비주얼 {keyVisuals.filter((kv) => kv.imageUrl).length}장이 준비됐습니다.
+                  이 이미지를 기반으로 영상이 생성됩니다 (Image-to-Video).
+                </p>
+              </div>
+            )}
           </div>
 
           {!videoPath ? (
@@ -1883,7 +2117,7 @@ export default function CreatePage() {
                     } catch {
                       // silent — step 4 handles empty accounts gracefully
                     }
-                    setCurrentStep(4);
+                    setCurrentStep(5);
                   }}
                 >
                   다음: 배포 예약
@@ -1898,9 +2132,9 @@ export default function CreatePage() {
       )}
 
       {/* ════════════════════════════════════════════════════════
-          STEP 4: 배포 예약
+          STEP 5: 배포 예약
           ════════════════════════════════════════════════════════ */}
-      {currentStep === 4 && (
+      {currentStep === 5 && (
         <Card className="space-y-6 animate-fade-in">
           <div>
             <h2 className="text-lg font-semibold text-[#111827]">배포 예약</h2>
