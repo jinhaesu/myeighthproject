@@ -55,9 +55,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const projectRoot = process.cwd();
-    const filename = contentId ? `${contentId}.png` : `${Date.now()}.png`;
-    const outputPath = path.join(projectRoot, 'output', 'images', filename);
+    const isProduction = process.env.NODE_ENV === 'production';
+    const baseDir = isProduction ? '/tmp' : process.cwd();
+    const sectionIdx = (body as Record<string, unknown>).section_index;
+    const filename = contentId
+      ? (sectionIdx != null ? `${contentId}_section${sectionIdx}.png` : `${contentId}.png`)
+      : `${Date.now()}.png`;
+    const outputPath = path.join(baseDir, 'output', 'images', filename);
 
     const result = await generateImage({
       prompt,
@@ -85,6 +89,7 @@ export async function POST(request: Request) {
       success: true,
       data: {
         imagePath: result.imagePath,
+        imageUrl: result.imagePath,
         revisedPrompt: result.revisedPrompt,
         generationTimeMs: durationMs,
       },
