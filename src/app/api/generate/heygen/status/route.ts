@@ -72,13 +72,26 @@ export async function GET(request: Request) {
       status = 'failed';
     }
 
+    // Convert local file path to browser-accessible URL
+    let browsableVideoPath = videoPath;
+    if (videoPath) {
+      const relMatch = videoPath.match(/output[/\\](.+)$/);
+      if (relMatch) {
+        const isProduction = process.env.NODE_ENV === 'production';
+        const railwayHost = process.env.RAILWAY_PUBLIC_DOMAIN
+          ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+          : (isProduction ? 'https://myeighthproject-production.up.railway.app' : '');
+        browsableVideoPath = `${railwayHost}/api/files/${relMatch[1].replace(/\\/g, '/')}`;
+      }
+    }
+
     return Response.json({
       success: true,
       data: {
         task_id: log.id,
         status,
         progress,
-        video_path: videoPath,
+        video_path: browsableVideoPath,
         error: log.error_message,
         duration_ms: log.duration_ms,
       },

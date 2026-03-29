@@ -85,11 +85,22 @@ export async function POST(request: Request) {
       );
     }
 
+    // Build a browser-accessible absolute URL for the generated image
+    // In production, frontend is on Vercel but files are on Railway
+    const relMatch = result.imagePath.match(/output[/\\](.+)$/);
+    const relativePath = relMatch
+      ? relMatch[1].replace(/\\/g, '/')
+      : `images/${filename}`;
+    const railwayHost = process.env.RAILWAY_PUBLIC_DOMAIN
+      ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+      : (isProduction ? 'https://myeighthproject-production.up.railway.app' : '');
+    const browsableUrl = `${railwayHost}/api/files/${relativePath}`;
+
     return Response.json({
       success: true,
       data: {
         imagePath: result.imagePath,
-        imageUrl: result.imagePath,
+        imageUrl: browsableUrl,
         revisedPrompt: result.revisedPrompt,
         generationTimeMs: durationMs,
       },
