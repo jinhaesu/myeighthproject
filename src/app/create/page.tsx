@@ -1932,6 +1932,11 @@ export default function CreatePage() {
                           src={getFileUrl(kv.imageUrl)}
                           alt={`섹션 ${idx + 1} 키 비주얼`}
                           className="w-full h-full object-cover"
+                          onError={(e) => {
+                            const target = e.target as HTMLImageElement;
+                            target.style.display = 'none';
+                            target.parentElement!.innerHTML = `<div class="flex flex-col items-center gap-1 text-red-400 p-4"><p class="text-xs font-medium">이미지 로딩 실패</p><p class="text-[10px] text-gray-400 break-all">${getFileUrl(kv.imageUrl!)}</p></div>`;
+                          }}
                         />
                       ) : kv.generating ? (
                         <div className="flex flex-col items-center gap-2">
