@@ -32,6 +32,7 @@ export interface SectionInput {
   body: string;
   visual_prompt?: string;
   duration_seconds: number;
+  image_url?: string;  // pre-generated key visual URL (skip DALL-E for this section)
 }
 
 // ─── Defaults (9:16 short-form) ────────────────────────────────────────────
@@ -317,7 +318,14 @@ async function generateSlideshowVideo(
     updateVideoProgress(contentId, 0, limitedSections.length, `DALL-E 이미지 생성 중... (${limitedSections.length}장)`);
     sectionImageResults = await generateSectionImages(limitedSections, contentId);
   } else {
-    sectionImageResults = limitedSections.map(() => null);
+    // Use pre-generated key visual URLs if available
+    sectionImageResults = limitedSections.map((sec) => {
+      if (sec.image_url) {
+        return { imagePath: sec.image_url, imageUrl: sec.image_url };
+      }
+      return null;
+    });
+    console.log(`[Video] Using pre-generated images: ${sectionImageResults.filter(Boolean).length}/${limitedSections.length}`);
   }
 
   // Step 2: Convert each DALL-E image to an AI video clip using selected engine
