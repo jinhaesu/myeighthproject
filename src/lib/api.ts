@@ -75,10 +75,18 @@ export function getFileUrl(filePath: string): string {
   const match = filePath.match(/output[/\\](.+)$/);
   if (match) {
     const relativePath = match[1].replace(/\\/g, '/');
-    if (typeof window !== 'undefined' && process.env.NODE_ENV === 'production') {
+    // Always use Railway URL in production (files are stored on Railway, not Vercel)
+    if (process.env.NODE_ENV === 'production') {
       return `${RAILWAY_URL}/api/files/${relativePath}`;
     }
     return `/api/files/${relativePath}`;
+  }
+  // If the path already looks like a relative URL, use Railway in production
+  if (filePath.startsWith('/api/files/')) {
+    if (process.env.NODE_ENV === 'production') {
+      return `${RAILWAY_URL}${filePath}`;
+    }
+    return filePath;
   }
   return filePath;
 }
