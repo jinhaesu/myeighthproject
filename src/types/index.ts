@@ -17,6 +17,23 @@ export interface AdShot {
   prompt: string;
 }
 
+// ─── Storyboard Types ────────────────────────────────────────────────────────
+
+export type StoryboardCount = 4 | 8 | 16;
+
+export interface Storyboard {
+  index: number;           // 1-based
+  title: string;           // short label e.g. "제품 클로즈업"
+  visual_description: string; // Korean description of the visual
+  image_prompt: string;    // English DALL-E/Kling prompt for this board
+  duration_seconds: number;
+  shot_type?: ShotType;
+}
+
+export interface StoryboardWithScript extends Storyboard {
+  narration: string;       // voice script for this board
+}
+
 // ─── Ad Config (광고 제작 설정) ──────────────────────────────────────────────
 
 export interface AdConfig {
@@ -62,6 +79,8 @@ export interface Content {
   ad_config: AdConfig | null;
   hooks: string[] | null;
   cta_options: string[] | null;
+  storyboard_count: StoryboardCount | null;
+  storyboards: StoryboardWithScript[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -158,6 +177,8 @@ export interface GenerateScriptRequest {
   additional_instructions?: string;
   video_length?: VideoLength;
   ad_config?: AdConfig;
+  mode?: 'storyboard' | 'narration' | 'full';
+  storyboard_count?: StoryboardCount;
 }
 
 export interface GenerateTTSRequest {
@@ -316,6 +337,8 @@ export interface PlanningTemplate {
   series_enabled: boolean;
   series_name: string | null;     // e.g. "널담 건강 시리즈"
   series_prefix: string | null;   // e.g. "EP" → "EP1. 제목", "EP2. 제목"
+  storyboard_count: StoryboardCount;
+  storyboard_structure: Storyboard[] | null; // fixed storyboard template
   created_at: string;
   updated_at: string;
 }
@@ -332,6 +355,8 @@ export interface CreateTemplateRequest {
   series_enabled?: boolean;
   series_name?: string;
   series_prefix?: string;
+  storyboard_count?: StoryboardCount;
+  storyboard_structure?: Storyboard[];
 }
 
 // ─── API Response Types ─────────────────────────────────────────────────────

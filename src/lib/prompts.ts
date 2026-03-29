@@ -1,4 +1,4 @@
-import type { ContentType, Language, VideoLength, AdConfig } from '@/types';
+import type { ContentType, Language, VideoLength, AdConfig, Storyboard, StoryboardCount } from '@/types';
 
 // ─── Brand Voice ────────────────────────────────────────────────────────────
 
@@ -348,6 +348,146 @@ export function buildUserPrompt(
 - body에는 절대로 [후킹], [핵심정보] 같은 태그를 넣지 마세요. TTS가 그대로 읽습니다.
 - visual_scenario는 영상 전체에 적용되는 하나의 통합 프롬프트입니다. 섹션별로 나누지 마세요.`;
   }
+
+  return prompt;
+}
+
+// ─── Storyboard Prompt ───────────────────────────────────────────────────────
+
+export function buildStoryboardPrompt(
+  topic: string,
+  options: {
+    visualScenario: string;
+    storyboardCount: StoryboardCount;
+    videoLength: VideoLength;
+    contentType: ContentType;
+    adConfig?: AdConfig;
+    seriesInfo?: { name: string; episode: number; prefix: string };
+  }
+): string {
+  const { visualScenario, storyboardCount, videoLength, adConfig, seriesInfo } = options;
+
+  const durationsHint: Record<StoryboardCount, string> = {
+    4: '각 보드 약 3-4초',
+    8: '각 보드 약 2초',
+    16: '각 보드 약 1초',
+  };
+
+  let prompt = `주제: ${topic}`;
+  prompt += `\n영상 길이: ${videoLength}초`;
+  prompt += `\n스토리보드 수: ${storyboardCount}개 (${durationsHint[storyboardCount]})`;
+
+  if (adConfig) {
+    prompt += `\n\n[제품 정보]`;
+    prompt += `\n- 제품명: ${adConfig.product_name}`;
+    prompt += `\n- 카테고리: ${adConfig.category}`;
+    prompt += `\n- 핵심 효익: ${adConfig.benefits.join(', ')}`;
+    prompt += `\n- 타깃 고객: ${adConfig.target_audience}`;
+    prompt += `\n- 브랜드 톤: ${adConfig.tone}`;
+    prompt += `\n- 배포 채널: ${adConfig.channels.join(', ')}`;
+    if (adConfig.constraints.length > 0) {
+      prompt += `\n- 금지 요소: ${adConfig.constraints.join(', ')}`;
+    }
+  }
+
+  prompt += `\n\n[영상 전체 비주얼 시나리오 — 모든 보드에 일관되게 적용]\n${visualScenario}`;
+
+  if (seriesInfo) {
+    prompt += `\n\n[시리즈 정보]`;
+    prompt += `\n시리즈명: ${seriesInfo.name}`;
+    prompt += `\n에피소드: ${seriesInfo.prefix}${seriesInfo.episode}`;
+  }
+
+  prompt += `
+
+위 정보를 바탕으로 영상을 정확히 ${storyboardCount}개의 스토리보드로 분할하고, 반드시 아래 JSON 형식으로만 응답해주세요:
+
+{
+  "storyboards": [
+    {
+      "index": 1,
+      "title": "제품 클로즈업",
+      "visual_description": "깨끗한 대리석 테이블 위 패키지 클로즈업 (한국어)",
+      "image_prompt": "Close-up premium commercial shot of protein bagel package on clean marble tabletop, soft studio lighting, shallow depth of field, vertical 9:16 format, No text overlay",
+      "duration_seconds": ${Math.round(videoLength / storyboardCount)},
+      "shot_type": "product_closeup"
+    }
+  ]
+}
+
+규칙:
+- 반드시 정확히 ${storyboardCount}개의 스토리보드를 생성하세요.
+- 모든 duration_seconds의 합이 정확히 ${videoLength}초가 되어야 합니다.
+- image_prompt는 반드시 영어로 작성하고, DALL-E에 바로 입력 가능한 구체적인 프롬프트여야 합니다.
+- image_prompt는 위 비주얼 시나리오의 스타일/분위기를 반영해야 합니다.
+- image_prompt에는 반드시 "vertical 9:16 format"과 "No text overlay"를 포함하세요.
+- visual_description은 반드시 한국어로 작성하세요.
+- shot_type은 반드시 product_closeup, texture_macro, lifestyle, benefit_frame, endcard 중 하나여야 합니다.
+- 내레이션/스크립트는 이 단계에서 작성하지 마세요. 비주얼 구성만 담당합니다.
+- ${storyboardCount === 4 ? '4개 보드: 각 3-4초 배분 (예: 4+4+4+3=15초)' : storyboardCount === 8 ? '8개 보드: 각 약 2초 배분 (합이 정확히 ' + videoLength + '초)' : '16개 보드: 각 약 1초 배분 (합이 정확히 ' + videoLength + '초)'}`;
+
+  return prompt;
+}
+
+// ─── Narration Prompt ────────────────────────────────────────────────────────
+
+export function buildNarrationPrompt(
+  topic: string,
+  storyboards: Storyboard[],
+  options: {
+    contentType: ContentType;
+    language: Language;
+    videoLength: VideoLength;
+    adConfig?: AdConfig;
+  }
+): string {
+  const { videoLength, adConfig } = options;
+
+  const storyboardSummary = storyboards
+    .map(
+      (sb) =>
+        `  - 보드 ${sb.index} (${sb.duration_seconds}초): ${sb.title} — ${sb.visual_description}`
+    )
+    .join('\n');
+
+  let prompt = `주제: ${topic}`;
+  prompt += `\n영상 길이: ${videoLength}초`;
+  prompt += `\n스토리보드 수: ${storyboards.length}개`;
+
+  if (adConfig) {
+    prompt += `\n\n[제품 정보]`;
+    prompt += `\n- 제품명: ${adConfig.product_name}`;
+    prompt += `\n- 핵심 효익: ${adConfig.benefits.join(', ')}`;
+    prompt += `\n- 타깃 고객: ${adConfig.target_audience}`;
+    prompt += `\n- 브랜드 톤: ${adConfig.tone}`;
+  }
+
+  prompt += `\n\n[스토리보드 구성]\n${storyboardSummary}`;
+
+  prompt += `
+
+각 스토리보드에 맞는 내레이션(보이스 스크립트)을 작성하고, 반드시 아래 JSON 형식으로만 응답해주세요:
+
+{
+  "storyboards_with_script": [
+    {
+      "index": 1,
+      "narration": "빵은 먹고 싶은데 죄책감은 싫다면"
+    }
+  ],
+  "hooks": ["훅1", "훅2", "훅3"],
+  "cta_options": ["CTA1", "CTA2", "CTA3"],
+  "full_narration": "전체 내레이션 합쳐진 텍스트"
+}
+
+규칙:
+- narration은 반드시 순수 텍스트만 작성하세요. [후킹], (효과음), <태그> 같은 마크업을 절대 포함하지 마세요. TTS가 이 텍스트를 그대로 읽습니다.
+- 각 보드의 narration은 해당 보드의 duration_seconds에 맞게 짧게 작성하세요.
+- ${videoLength <= 15 ? `${videoLength}초 영상이므로 전체 내레이션은 2-3문장 이내로 매우 간결하게 작성하세요.` : `${videoLength}초 영상이므로 핵심만 간결하게 전달하세요.`}
+- 1-2초 보드의 경우 narration은 한 구절(5-10자) 이하로 작성하세요.
+- full_narration은 모든 보드의 narration을 자연스럽게 이어 붙인 완성된 내레이션 대본입니다.
+- hooks는 영상 첫 1-2초에 시청자 주의를 끄는 훅 문장 3가지입니다.
+- cta_options는 영상 마지막 행동 유도 문구 3가지입니다.`;
 
   return prompt;
 }

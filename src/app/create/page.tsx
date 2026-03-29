@@ -25,6 +25,9 @@ import type {
   AdShot,
   ShotType,
   ScriptSection,
+  StoryboardCount,
+  Storyboard,
+  StoryboardWithScript,
   PlatformAccount,
   Platform,
   VideoEngine,
@@ -85,32 +88,20 @@ const SHOT_TYPE_ICONS: Record<ShotType, string> = {
   endcard: '🎯',
 };
 
+const STORYBOARD_COUNTS: StoryboardCount[] = [4, 8, 16];
+const STORYBOARD_INFO: Record<StoryboardCount, { label: string; desc: string }> = {
+  4: { label: '4컷', desc: '핵심만 간결하게 (6~15초 추천)' },
+  8: { label: '8컷', desc: '균형 잡힌 구성 (15~30초 추천)' },
+  16: { label: '16컷', desc: '디테일한 스토리 (30~60초 추천)' },
+};
+
 const STEPS = [
-  {
-    number: 1,
-    label: '기본 정보',
-    subtitle: '콘텐츠 유형, 영상 길이, 주제를 설정합니다',
-  },
-  {
-    number: 2,
-    label: '스크립트 & 샷리스트',
-    subtitle: 'AI가 스크립트와 촬영 구성을 생성합니다',
-  },
-  {
-    number: 3,
-    label: '키 비주얼 생성',
-    subtitle: '각 섹션의 대표 이미지를 먼저 생성하고 확인합니다',
-  },
-  {
-    number: 4,
-    label: '영상 생성',
-    subtitle: '확인된 이미지를 기반으로 영상을 제작합니다',
-  },
-  {
-    number: 5,
-    label: '배포 예약',
-    subtitle: '플랫폼과 일정을 선택하여 배포를 예약합니다',
-  },
+  { number: 1, label: '주제 & 템플릿', subtitle: '주제를 정하고 템플릿을 선택합니다' },
+  { number: 2, label: '비주얼 시나리오', subtitle: '영상 전체의 비주얼 컨셉을 설정합니다' },
+  { number: 3, label: '스토리보드', subtitle: '4/8/16컷으로 스토리보드를 분할합니다' },
+  { number: 4, label: '스크립트', subtitle: '각 스토리보드에 맞는 나레이션을 생성합니다' },
+  { number: 5, label: '이미지 & 영상', subtitle: '이미지를 생성하고 영상을 제작합니다' },
+  { number: 6, label: '배포', subtitle: '플랫폼과 일정을 선택합니다' },
 ];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -231,6 +222,12 @@ export default function CreatePage() {
   // ── Visual scenario (unified for entire video) ──
   const [visualScenario, setVisualScenario] = useState('');
 
+  // ── Storyboard state ──
+  const [storyboardCount, setStoryboardCount] = useState<StoryboardCount>(4);
+  const [storyboards, setStoryboards] = useState<Storyboard[]>([]);
+  const [storyboardsWithScript, setStoryboardsWithScript] = useState<StoryboardWithScript[]>([]);
+  const [fullNarration, setFullNarration] = useState('');
+
   // Ad-specific fields (raw form state, converted to AdConfig on submit)
   const [adProductName, setAdProductName] = useState('');
   const [adCategory, setAdCategory] = useState('bakery');
@@ -305,7 +302,7 @@ export default function CreatePage() {
   }, [avatars.length]);
 
   useEffect(() => {
-    if (currentStep === 4 && videoType === 'heygen') {
+    if (currentStep === 5 && videoType === 'heygen') {
       loadAvatars();
     }
   }, [currentStep, videoType, loadAvatars]);
@@ -324,6 +321,8 @@ export default function CreatePage() {
     setVideoLength(tpl.video_length);
     setLanguage(tpl.language);
     if (tpl.visual_scenario) setVisualScenario(tpl.visual_scenario);
+    if (tpl.storyboard_count) setStoryboardCount(tpl.storyboard_count);
+    if (tpl.storyboard_structure) setStoryboards(tpl.storyboard_structure);
     if (tpl.series_enabled) {
       setSeriesEnabled(true);
       setSeriesName(tpl.series_name || '');
@@ -392,9 +391,18 @@ export default function CreatePage() {
     setContentType(ct);
     if (AD_TYPES.includes(ct)) {
       setVideoLength(15);
+      setStoryboardCount(4);
     } else {
       setVideoLength(60);
+      setStoryboardCount(16);
     }
+  }
+
+  function handleVideoLengthChange(vl: VideoLength) {
+    setVideoLength(vl);
+    if (vl <= 15) setStoryboardCount(4);
+    else if (vl <= 30) setStoryboardCount(8);
+    else setStoryboardCount(16);
   }
 
   // ── Channel checkbox toggle ──
@@ -436,7 +444,7 @@ export default function CreatePage() {
     }
   }
 
-  // ── Step 2: Generate script ──
+  // ── Step 4: Generate narration based on storyboards ──
   async function handleGenerateScript() {
     if (!contentId) return;
     setError(null);
@@ -445,6 +453,8 @@ export default function CreatePage() {
       const adConfig = isAd ? buildAdConfig() : undefined;
       const res = await apiPost<{
         fullScript: string;
+        fullNarration?: string;
+        storyboardsWithScript?: StoryboardWithScript[];
         sections?: ScriptSection[];
         shots?: AdShot[];
         hooks?: string[];
@@ -452,14 +462,20 @@ export default function CreatePage() {
         visualScenario?: string;
       }>('/api/generate/script', {
         content_id: contentId,
+        mode: storyboards.length > 0 ? 'narration' : 'full',
         topic,
         video_length: videoLength,
+        storyboard_count: storyboardCount,
         ...(adConfig ? { ad_config: adConfig } : {}),
         ...(visualScenario ? { visual_scenario: visualScenario } : {}),
         ...(seriesEnabled && seriesName ? { series_info: { name: seriesName, episode: seriesEpisode, prefix: seriesPrefix } } : {}),
       });
       if (res.data) {
-        setScript(res.data.fullScript ?? '');
+        setScript(res.data.fullNarration || res.data.fullScript || '');
+        setFullNarration(res.data.fullNarration || res.data.fullScript || '');
+        if (res.data.storyboardsWithScript) {
+          setStoryboardsWithScript(res.data.storyboardsWithScript);
+        }
         setSections(res.data.sections ?? []);
         setScriptSections(res.data.sections ?? []);
         setShots(res.data.shots ?? []);
@@ -501,10 +517,10 @@ export default function CreatePage() {
         tts_provider: ttsProvider,
       });
       setAudioGenerated(true);
-      // Initialize key visuals for each section
-      const secs = scriptSections.length > 0 ? scriptSections : sections;
-      setKeyVisuals(secs.map((_, idx) => ({ sectionIndex: idx, imageUrl: null, generating: false })));
-      setCurrentStep(3);
+      // Initialize key visuals for each storyboard
+      const boards = storyboardsWithScript.length > 0 ? storyboardsWithScript : (scriptSections.length > 0 ? scriptSections : sections);
+      setKeyVisuals(boards.map((_, idx) => ({ sectionIndex: idx, imageUrl: null, generating: false })));
+      setCurrentStep(5);
     } catch (err) {
       setError(err instanceof Error ? err.message : '음성 생성 실패');
     } finally {
@@ -1010,22 +1026,34 @@ export default function CreatePage() {
             </div>
           )}
 
-          {/* ── Visual Scenario (unified) ── */}
+          {/* ── Storyboard Count ── */}
           <div className="space-y-2">
-            <label htmlFor="visual-scenario" className="text-sm font-medium text-[#111827]">
-              영상 시나리오
-              <span className="text-xs text-[#6b7280] font-normal ml-2">(전체 영상에 적용될 하나의 비주얼 컨셉)</span>
-            </label>
-            <p className="text-xs text-[#6b7280]">
-              이 시나리오가 영상 전체의 분위기, 조명, 카메라 앵글을 결정합니다. 비워두면 AI가 자동 생성합니다.
-            </p>
-            <textarea
-              id="visual-scenario"
-              value={visualScenario}
-              onChange={(e) => setVisualScenario(e.target.value)}
-              placeholder="예: Premium food photography style, warm studio lighting, clean white marble table, soft depth of field, vertical 9:16 format, no text overlay"
-              className="w-full rounded-xl border border-amber-200 bg-amber-50/30 px-4 py-3 text-sm text-[#374151] font-mono placeholder:text-gray-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/10 transition-all resize-y min-h-[80px]"
-            />
+            <label className="text-sm font-medium text-[#111827]">스토리보드 컷 수</label>
+            <p className="text-xs text-[#6b7280]">영상을 몇 개의 장면으로 분할할지 선택합니다</p>
+            <div className="grid grid-cols-3 gap-2">
+              {STORYBOARD_COUNTS.map((cnt) => {
+                const info = STORYBOARD_INFO[cnt];
+                const selected = storyboardCount === cnt;
+                return (
+                  <button
+                    key={cnt}
+                    type="button"
+                    onClick={() => setStoryboardCount(cnt)}
+                    className={cn(
+                      'text-left rounded-xl border px-4 py-3 transition-all',
+                      selected
+                        ? 'border-[#1a5c2e] bg-green-50 shadow-sm'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    )}
+                  >
+                    <span className={cn('text-lg font-bold', selected ? 'text-[#1a5c2e]' : 'text-[#111827]')}>
+                      {info.label}
+                    </span>
+                    <p className="text-xs text-[#6b7280] mt-0.5">{info.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* ── Series Settings ── */}
@@ -1100,17 +1128,212 @@ export default function CreatePage() {
       )}
 
       {/* ════════════════════════════════════════════════════════
-          STEP 2: 스크립트 & 샷리스트
+          STEP 2: 비주얼 시나리오
           ════════════════════════════════════════════════════════ */}
       {currentStep === 2 && (
         <Card className="space-y-6 animate-fade-in">
+          <div>
+            <h2 className="text-lg font-semibold text-[#111827]">비주얼 시나리오</h2>
+            <p className="text-sm text-[#6b7280] mt-1">
+              영상 전체의 비주얼 컨셉을 설정합니다. 이 시나리오가 스토리보드의 이미지 프롬프트 기반이 됩니다.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="visual-scenario" className="text-sm font-medium text-[#111827]">
+              비주얼 시나리오 (영어)
+            </label>
+            <p className="text-xs text-[#6b7280]">
+              카메라 앵글, 조명, 분위기, 색감, 스타일을 구체적으로 묘사하세요. 모든 스토리보드 이미지가 이 컨셉을 따릅니다.
+            </p>
+            <textarea
+              id="visual-scenario"
+              value={visualScenario}
+              onChange={(e) => setVisualScenario(e.target.value)}
+              placeholder="예: Premium food photography style, warm studio lighting, clean white marble table, shallow depth of field, soft natural light, vertical 9:16 format, no text overlay, appetizing close-up shots"
+              className="w-full rounded-xl border border-amber-200 bg-amber-50/30 px-4 py-3 text-sm text-[#374151] font-mono placeholder:text-gray-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400/10 transition-all resize-y min-h-[120px]"
+            />
+          </div>
+
+          {/* Quick scenario presets */}
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-[#6b7280]">빠른 프리셋</p>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { label: '푸드 포토그래피', value: 'Premium food photography, warm studio lighting, clean white marble tabletop, shallow depth of field, appetizing close-up, soft shadows, vertical 9:16 format, no text overlay' },
+                { label: '미니멀 제품샷', value: 'Minimalist product shot, clean solid background, soft gradient lighting, centered composition, premium consumer brand aesthetic, subtle shadow, vertical 9:16 format, no text overlay' },
+                { label: '라이프스타일', value: 'Lifestyle commercial, bright morning kitchen, soft natural light from window, clean premium interior, calm healthy routine mood, warm color palette, vertical 9:16 format, no text overlay' },
+                { label: '애니메이션', value: 'Cute animated food characters, vibrant colorful background, playful cartoon style, bouncy motion, friendly expressions, Pixar-like quality, vertical 9:16 format, no text overlay' },
+              ].map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => setVisualScenario(preset.value)}
+                  className="text-xs border border-gray-200 rounded-full px-3 py-1.5 text-[#374151] hover:border-amber-300 hover:bg-amber-50 transition-all"
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex justify-between pt-2">
+            <Button variant="secondary" onClick={() => setCurrentStep(1)}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              이전
+            </Button>
+            <Button
+              onClick={() => setCurrentStep(3)}
+              disabled={!visualScenario.trim()}
+              size="lg"
+            >
+              다음: 스토리보드 생성
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/* ════════════════════════════════════════════════════════
+          STEP 3: 스토리보드
+          ════════════════════════════════════════════════════════ */}
+      {currentStep === 3 && (
+        <Card className="space-y-6 animate-fade-in">
+          <div>
+            <h2 className="text-lg font-semibold text-[#111827]">스토리보드 ({storyboardCount}컷)</h2>
+            <p className="text-sm text-[#6b7280] mt-1">
+              비주얼 시나리오를 기반으로 {storyboardCount}개의 장면으로 분할합니다.
+              {storyboards.length > 0 && ' 각 장면의 구성을 확인하세요.'}
+            </p>
+          </div>
+
+          {storyboards.length === 0 ? (
+            <div className="text-center py-12 space-y-5">
+              <div className="w-16 h-16 bg-gradient-to-br from-amber-100 to-amber-200 rounded-2xl flex items-center justify-center mx-auto">
+                <svg className="w-8 h-8 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h8m-8 6h16" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-[#111827] font-medium mb-1">스토리보드를 생성할 준비가 되었습니다</p>
+                <p className="text-sm text-[#6b7280]">
+                  &quot;{topic}&quot; &middot; {storyboardCount}컷 &middot; {videoLengthLabel(videoLength)}
+                </p>
+              </div>
+              <Button
+                onClick={async () => {
+                  if (!contentId) return;
+                  setLoading(true);
+                  setError(null);
+                  try {
+                    const adConfig = isAd ? buildAdConfig() : undefined;
+                    const res = await apiPost<{ storyboards: Storyboard[] }>('/api/generate/script', {
+                      content_id: contentId,
+                      mode: 'storyboard',
+                      topic,
+                      visual_scenario: visualScenario,
+                      storyboard_count: storyboardCount,
+                      video_length: videoLength,
+                      ...(adConfig ? { ad_config: adConfig } : {}),
+                    });
+                    if (res.data?.storyboards) {
+                      setStoryboards(res.data.storyboards);
+                    }
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : '스토리보드 생성 실패');
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                disabled={loading}
+                size="lg"
+              >
+                {loading ? (
+                  <div className="flex items-center gap-3">
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>AI가 스토리보드를 구성하고 있습니다...</span>
+                  </div>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h8m-8 6h16" />
+                    </svg>
+                    스토리보드 생성
+                  </>
+                )}
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[#6b7280] bg-gray-100 px-2 py-0.5 rounded-full">
+                  {storyboards.length}컷 &middot; 총 {storyboards.reduce((s, b) => s + b.duration_seconds, 0)}초
+                </span>
+              </div>
+              <div className={cn(
+                'grid gap-3',
+                storyboardCount <= 4 ? 'grid-cols-1 sm:grid-cols-2' :
+                storyboardCount <= 8 ? 'grid-cols-2 sm:grid-cols-4' :
+                'grid-cols-2 sm:grid-cols-4'
+              )}>
+                {storyboards.map((board) => (
+                  <div key={board.index} className="border border-gray-200 rounded-xl p-3 bg-white hover:border-[#1a5c2e]/30 transition-all">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="w-6 h-6 bg-[#1a5c2e] text-white rounded-full flex items-center justify-center text-[10px] font-bold">
+                        {board.index}
+                      </span>
+                      <span className="text-[10px] font-mono text-white bg-[#1a5c2e] px-1.5 py-0.5 rounded-full">
+                        {board.duration_seconds}s
+                      </span>
+                    </div>
+                    <p className="text-xs font-semibold text-[#111827] mb-1">{board.title}</p>
+                    <p className="text-[11px] text-[#6b7280] leading-relaxed mb-2">{board.visual_description}</p>
+                    {board.shot_type && (
+                      <span className="text-[10px] text-[#1a5c2e] bg-green-50 px-1.5 py-0.5 rounded-full">
+                        {shotTypeLabel(board.shot_type)}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-between pt-2">
+            <Button variant="secondary" onClick={() => setCurrentStep(2)}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              시나리오로
+            </Button>
+            <Button
+              onClick={() => setCurrentStep(4)}
+              disabled={storyboards.length === 0}
+              size="lg"
+            >
+              다음: 스크립트 생성
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/* ════════════════════════════════════════════════════════
+          STEP 4: 스크립트 (나레이션)
+          ════════════════════════════════════════════════════════ */}
+      {currentStep === 4 && (
+        <Card className="space-y-6 animate-fade-in">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-lg font-semibold text-[#111827]">스크립트 & 샷리스트</h2>
+              <h2 className="text-lg font-semibold text-[#111827]">스크립트 (나레이션)</h2>
               <p className="text-sm text-[#6b7280] mt-1">
-                {isAd
-                  ? 'AI가 광고 샷 구성, 훅, CTA를 포함한 스크립트를 생성합니다'
-                  : 'AI가 주제에 맞는 섹션별 스크립트를 작성합니다'}
+                스토리보드 {storyboards.length}컷에 맞는 나레이션을 생성합니다. TTS가 이 텍스트를 읽습니다.
               </p>
               {seriesEnabled && seriesName && (
                 <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
@@ -1586,9 +1809,9 @@ export default function CreatePage() {
       )}
 
       {/* ════════════════════════════════════════════════════════
-          STEP 3: 키 비주얼 생성
+          STEP 5: 이미지 & 영상 생성 — Phase 1: 키 비주얼
           ════════════════════════════════════════════════════════ */}
-      {currentStep === 3 && (
+      {currentStep === 5 && !keyVisualsReady && (
         <Card className="space-y-6 animate-fade-in">
           <div>
             <h2 className="text-lg font-semibold text-[#111827]">키 비주얼 생성</h2>
@@ -1624,19 +1847,24 @@ export default function CreatePage() {
                 size="sm"
                 disabled={loading || keyVisuals.every((kv) => kv.generating)}
                 onClick={async () => {
-                  const secs = scriptSections.length > 0 ? scriptSections : sections;
+                  // Use storyboards if available, fall back to sections
+                  const boards = storyboardsWithScript.length > 0 ? storyboardsWithScript : (storyboards.length > 0 ? storyboards : null);
+                  const secs = boards || (scriptSections.length > 0 ? scriptSections : sections);
                   setLoading(true);
                   setError(null);
                   for (let i = 0; i < secs.length; i++) {
-                    if (keyVisuals[i]?.imageUrl) continue; // skip already generated
+                    if (keyVisuals[i]?.imageUrl) continue;
                     setKeyVisuals((prev) =>
                       prev.map((kv, idx) => idx === i ? { ...kv, generating: true } : kv)
                     );
                     try {
                       const sec = secs[i];
-                      const prompt = visualScenario
-                        ? `${visualScenario}. Scene: ${sec.visual_description || sec.title}`
-                        : `Korean health food brand commercial shot. ${sec.visual_description || sec.title}. Premium food photography, clean background, vertical 9:16 format.`;
+                      // Use storyboard's image_prompt directly if available
+                      const prompt = ('image_prompt' in sec && sec.image_prompt)
+                        ? sec.image_prompt
+                        : visualScenario
+                          ? `${visualScenario}. Scene: ${('visual_description' in sec ? sec.visual_description : '') || ('title' in sec ? sec.title : '')}`
+                          : `Korean health food brand commercial shot. Premium food photography, clean background, vertical 9:16 format.`;
                       const res = await apiPost<{ imagePath: string; imageUrl: string }>('/api/generate/image', {
                         content_id: contentId,
                         prompt,
@@ -1776,14 +2004,14 @@ export default function CreatePage() {
 
           {/* Navigation */}
           <div className="flex items-center justify-between pt-2">
-            <Button variant="secondary" onClick={() => setCurrentStep(2)}>
+            <Button variant="secondary" onClick={() => setCurrentStep(4)}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
               스크립트로 돌아가기
             </Button>
             <Button
-              onClick={() => setCurrentStep(4)}
+              onClick={() => setKeyVisualsReady(true)}
               disabled={keyVisuals.length === 0}
             >
               {keyVisualsReady ? (
@@ -1807,9 +2035,9 @@ export default function CreatePage() {
       )}
 
       {/* ════════════════════════════════════════════════════════
-          STEP 4: 영상 생성
+          STEP 5: 이미지 & 영상 생성 — Phase 2: 영상
           ════════════════════════════════════════════════════════ */}
-      {currentStep === 4 && (
+      {currentStep === 5 && keyVisualsReady && (
         <Card className="space-y-6 animate-fade-in">
           <div>
             <h2 className="text-lg font-semibold text-[#111827]">영상 생성</h2>
@@ -2127,9 +2355,9 @@ export default function CreatePage() {
                       const res = await apiGet<PlatformAccount[]>('/api/platforms');
                       if (res.data) setPlatformAccounts(res.data);
                     } catch {
-                      // silent — step 4 handles empty accounts gracefully
+                      // silent — step 6 handles empty accounts gracefully
                     }
-                    setCurrentStep(5);
+                    setCurrentStep(6);
                   }}
                 >
                   다음: 배포 예약
@@ -2144,9 +2372,9 @@ export default function CreatePage() {
       )}
 
       {/* ════════════════════════════════════════════════════════
-          STEP 5: 배포 예약
+          STEP 6: 배포 예약
           ════════════════════════════════════════════════════════ */}
-      {currentStep === 5 && (
+      {currentStep === 6 && (
         <Card className="space-y-6 animate-fade-in">
           <div>
             <h2 className="text-lg font-semibold text-[#111827]">배포 예약</h2>
