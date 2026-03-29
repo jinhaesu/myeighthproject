@@ -233,6 +233,32 @@ function runMigrations(db: Database.Database): void {
       // Column already exists — safe to ignore
     }
   }
+
+  // Migration: add storyboard columns to contents
+  const storyboardContentColumns: Array<[string, string]> = [
+    ['storyboard_count', 'INTEGER'],
+    ['storyboards', 'TEXT'],
+  ];
+  for (const [col, type] of storyboardContentColumns) {
+    try {
+      db.exec(`ALTER TABLE contents ADD COLUMN ${col} ${type}`);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+  }
+
+  // Migration: add storyboard columns to planning_templates
+  const storyboardTemplateColumns: Array<[string, string]> = [
+    ['storyboard_count', 'INTEGER DEFAULT 4'],
+    ['storyboard_structure', 'TEXT'],
+  ];
+  for (const [col, type] of storyboardTemplateColumns) {
+    try {
+      db.exec(`ALTER TABLE planning_templates ADD COLUMN ${col} ${type}`);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+  }
 }
 
 // ─── Helper: close db (for testing / graceful shutdown) ─────────────────────

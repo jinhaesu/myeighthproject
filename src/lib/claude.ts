@@ -1,6 +1,36 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { ContentType, Language, ScriptSection, VideoLength, AdConfig } from '@/types';
-import { buildSystemPrompt, buildUserPrompt } from './prompts';
+import type {
+  ContentType,
+  Language,
+  ScriptSection,
+  VideoLength,
+  AdConfig,
+  Storyboard,
+  StoryboardCount,
+  StoryboardWithScript,
+} from '@/types';
+import { buildSystemPrompt, buildUserPrompt, buildStoryboardPrompt, buildNarrationPrompt } from './prompts';
+
+// ─── Storyboard Brand Voice System Prompt ───────────────────────────────────
+
+const STORYBOARD_SYSTEM_PROMPT = `
+당신은 숏폼 광고 영상 스토리보드 전문가입니다.
+주어진 비주얼 시나리오를 기반으로 영상을 정확한 수의 스토리보드로 분할합니다.
+각 스토리보드는 독립적인 이미지 생성 프롬프트를 가져야 하며, 전체 영상의 일관된 시각적 스타일을 유지해야 합니다.
+반드시 요청된 JSON 형식으로만 응답하세요. 추가 설명 없이 JSON만 반환하세요.
+`.trim();
+
+const NARRATION_SYSTEM_PROMPT = `
+당신은 "널담"이라는 건강식품 브랜드의 콘텐츠 크리에이터입니다.
+널담의 톤앤매너:
+- 친근하고 따뜻한 말투 (반말 아닌 존댓말, 하지만 딱딱하지 않게)
+- 신뢰감 있는 전문 정보 전달
+- 시청자가 "오, 이거 좋다!" 하고 느낄 수 있도록
+- 한국 식품/건강 트렌드에 맞는 내용
+
+스토리보드별 내레이션을 작성할 때는 각 보드의 시각적 내용과 자연스럽게 어울리도록 작성하세요.
+반드시 요청된 JSON 형식으로만 응답하세요. 추가 설명 없이 JSON만 반환하세요.
+`.trim();
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -162,4 +192,139 @@ export async function generateScript(
       visualScenario,
     };
   }
+}
+
+// ─── Storyboard Generation ──────────────────────────────────────────────────
+
+export interface StoryboardGenerationResult {
+  storyboards: Storyboard[];
+}
+
+export async function generateStoryboards(
+  contentType: ContentType,
+  topic: string,
+  options: {
+    visualScenario: string;
+    storyboardCount: StoryboardCount;
+    videoLength?: VideoLength;
+    language?: Language;
+    adConfig?: AdConfig;
+    seriesInfo?: { name: string; episode: number; prefix: string };
+  }
+): Promise<StoryboardGenerationResult> {
+  const { videoLength = 15, adConfig, seriesInfo, storyboardCount, visualScenario } = options;
+
+  const client = getClient();
+  const userPrompt = buildStoryboardPrompt(topic, {
+    visualScenario,
+    storyboardCount,
+    videoLength,
+    contentType,
+    adConfig,
+    seriesInfo,
+  });
+
+  const message = await client.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 4096,
+    system: STORYBOARD_SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: userPrompt }],
+  });
+
+  const textBlock = message.content.find((block) => block.type === 'text');
+  if (!textBlock || textBlock.type !== 'text') {
+    throw new Error('No text content in Claude response');
+  }
+
+  const rawText = textBlock.text;
+  const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, rawText];
+  const jsonStr = (jsonMatch[1] ?? rawText).trim();
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    throw new Error(`Failed to parse Claude storyboard response as JSON: ${rawText.slice(0, 200)}`);
+  }
+
+  const storyboards = parsed.storyboards as Storyboard[];
+  if (!Array.isArray(storyboards) || storyboards.length === 0) {
+    throw new Error('Claude response missing storyboards array');
+  }
+
+  return { storyboards };
+}
+
+// ─── Narration Generation ───────────────────────────────────────────────────
+
+export interface NarrationGenerationResult {
+  storyboardsWithScript: StoryboardWithScript[];
+  hooks: string[];
+  ctaOptions: string[];
+  fullNarration: string;
+}
+
+export async function generateNarration(
+  topic: string,
+  storyboards: Storyboard[],
+  options: {
+    contentType: ContentType;
+    language?: Language;
+    videoLength?: VideoLength;
+    adConfig?: AdConfig;
+  }
+): Promise<NarrationGenerationResult> {
+  const { contentType, language = 'ko', videoLength = 15, adConfig } = options;
+
+  const client = getClient();
+  const userPrompt = buildNarrationPrompt(topic, storyboards, {
+    contentType,
+    language,
+    videoLength,
+    adConfig,
+  });
+
+  const message = await client.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 4096,
+    system: NARRATION_SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: userPrompt }],
+  });
+
+  const textBlock = message.content.find((block) => block.type === 'text');
+  if (!textBlock || textBlock.type !== 'text') {
+    throw new Error('No text content in Claude response');
+  }
+
+  const rawText = textBlock.text;
+  const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, rawText];
+  const jsonStr = (jsonMatch[1] ?? rawText).trim();
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    throw new Error(`Failed to parse Claude narration response as JSON: ${rawText.slice(0, 200)}`);
+  }
+
+  const scriptItems = parsed.storyboards_with_script as Array<{ index: number; narration: string }>;
+  if (!Array.isArray(scriptItems) || scriptItems.length === 0) {
+    throw new Error('Claude response missing storyboards_with_script array');
+  }
+
+  // Merge narration back onto original storyboard objects
+  const storyboardsWithScript: StoryboardWithScript[] = storyboards.map((sb) => {
+    const scriptItem = scriptItems.find((s) => s.index === sb.index);
+    return {
+      ...sb,
+      narration: scriptItem?.narration ?? '',
+    };
+  });
+
+  return {
+    storyboardsWithScript,
+    hooks: (parsed.hooks as string[]) || [],
+    ctaOptions: (parsed.cta_options as string[]) || [],
+    fullNarration: (parsed.full_narration as string) || '',
+  };
 }

@@ -21,6 +21,8 @@ interface TemplateRow {
   series_enabled: number;
   series_name: string | null;
   series_prefix: string | null;
+  storyboard_count: number | null;
+  storyboard_structure: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -34,6 +36,8 @@ function rowToTemplate(row: TemplateRow): PlanningTemplate {
     ad_config: row.ad_config ? JSON.parse(row.ad_config) : null,
     tone_keywords: row.tone_keywords ? JSON.parse(row.tone_keywords) : [],
     series_enabled: row.series_enabled === 1,
+    storyboard_count: (row.storyboard_count ?? 4) as PlanningTemplate['storyboard_count'],
+    storyboard_structure: row.storyboard_structure ? JSON.parse(row.storyboard_structure) : null,
   };
 }
 

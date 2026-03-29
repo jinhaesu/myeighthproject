@@ -30,6 +30,8 @@ interface ContentRow {
   template_id: number | null;
   series_episode: number | null;
   visual_scenario: string | null;
+  storyboard_count: number | null;
+  storyboards: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -43,6 +45,8 @@ function rowToContent(row: ContentRow): Content {
     ad_config: row.ad_config ? JSON.parse(row.ad_config) : null,
     hooks: row.hooks ? JSON.parse(row.hooks) : null,
     cta_options: row.cta_options ? JSON.parse(row.cta_options) : null,
+    storyboard_count: row.storyboard_count as Content['storyboard_count'] ?? null,
+    storyboards: row.storyboards ? JSON.parse(row.storyboards) : null,
   } as Content;
 }
 
