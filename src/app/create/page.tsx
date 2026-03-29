@@ -1889,7 +1889,7 @@ export default function CreatePage() {
                     }
                   }
                   setLoading(false);
-                  setKeyVisualsReady(true);
+                  // 이미지를 먼저 확인하도록 keyVisualsReady는 여기서 설정하지 않음
                 }}
               >
                 {loading ? (
@@ -2013,13 +2013,14 @@ export default function CreatePage() {
             <Button
               onClick={() => setKeyVisualsReady(true)}
               disabled={keyVisuals.length === 0}
+              size="lg"
             >
-              {keyVisualsReady ? (
+              {keyVisuals.some((kv) => kv.imageUrl) ? (
                 <>
-                  영상 생성으로
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
+                  이미지 확인 완료, 영상 생성으로
                 </>
               ) : (
                 <>
