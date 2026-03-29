@@ -518,7 +518,10 @@ export default function CreatePage() {
       });
       setAudioGenerated(true);
       // Initialize key visuals for each storyboard
-      const boards = storyboardsWithScript.length > 0 ? storyboardsWithScript : (scriptSections.length > 0 ? scriptSections : sections);
+      const boards = storyboardsWithScript.length > 0 ? storyboardsWithScript
+        : storyboards.length > 0 ? storyboards
+        : scriptSections.length > 0 ? scriptSections
+        : sections;
       setKeyVisuals(boards.map((_, idx) => ({ sectionIndex: idx, imageUrl: null, generating: false })));
       setCurrentStep(5);
     } catch (err) {
@@ -1911,15 +1914,18 @@ export default function CreatePage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {keyVisuals.map((kv, idx) => {
-                const secs = scriptSections.length > 0 ? scriptSections : sections;
-                const sec = secs[idx];
+                const boards = storyboardsWithScript.length > 0 ? storyboardsWithScript
+                  : storyboards.length > 0 ? storyboards
+                  : scriptSections.length > 0 ? scriptSections
+                  : sections;
+                const sec = boards[idx];
                 if (!sec) return null;
                 return (
                   <div key={idx} className="border border-gray-200 rounded-xl overflow-hidden bg-white">
                     {/* Section header */}
                     <div className="bg-gray-50 px-4 py-2 border-b border-gray-100 flex items-center justify-between">
                       <span className="text-xs font-semibold text-[#374151]">
-                        {sec.order || idx + 1}. {sec.title}
+                        {('index' in sec ? sec.index : ('order' in sec ? sec.order : idx + 1))}. {sec.title}
                       </span>
                       <span className="text-[10px] text-[#6b7280] bg-gray-100 px-1.5 py-0.5 rounded-full">
                         {sec.duration_seconds}초
