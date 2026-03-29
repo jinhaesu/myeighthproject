@@ -1871,10 +1871,11 @@ export default function CreatePage() {
                         size: '1024x1792',
                         section_index: i,
                       });
-                      const imgPath = res.data?.imagePath || res.data?.imageUrl;
-                      if (imgPath) {
+                      // imageUrl is now a relative URL like /api/files/images/1_section0.png
+                      const imgUrl = res.data?.imageUrl;
+                      if (imgUrl) {
                         setKeyVisuals((prev) =>
-                          prev.map((kv, idx) => idx === i ? { ...kv, imageUrl: imgPath, generating: false } : kv)
+                          prev.map((kv, idx) => idx === i ? { ...kv, imageUrl: imgUrl, generating: false } : kv)
                         );
                       } else {
                         setKeyVisuals((prev) =>
@@ -1929,13 +1930,15 @@ export default function CreatePage() {
                     <div className="aspect-[9/16] bg-gray-100 relative flex items-center justify-center max-h-[280px]">
                       {kv.imageUrl ? (
                         <img
-                          src={getFileUrl(kv.imageUrl)}
+                          src={kv.imageUrl}
                           alt={`섹션 ${idx + 1} 키 비주얼`}
                           className="w-full h-full object-cover"
                           onError={(e) => {
                             const target = e.target as HTMLImageElement;
                             target.style.display = 'none';
-                            target.parentElement!.innerHTML = `<div class="flex flex-col items-center gap-1 text-red-400 p-4"><p class="text-xs font-medium">이미지 로딩 실패</p><p class="text-[10px] text-gray-400 break-all">${getFileUrl(kv.imageUrl!)}</p></div>`;
+                            if (target.parentElement) {
+                              target.parentElement.innerHTML = `<div class="flex flex-col items-center gap-1 text-red-400 p-4"><p class="text-xs font-medium">이미지 로딩 실패</p><p class="text-[10px] text-gray-400 break-all">${kv.imageUrl}</p></div>`;
+                            }
                           }}
                         />
                       ) : kv.generating ? (
@@ -1972,10 +1975,10 @@ export default function CreatePage() {
                               size: '1024x1792',
                               section_index: idx,
                             });
-                            const imgPath = res.data?.imagePath || res.data?.imageUrl;
-                            if (imgPath) {
+                            const imgUrl = res.data?.imageUrl;
+                            if (imgUrl) {
                               setKeyVisuals((prev) =>
-                                prev.map((k, i) => i === idx ? { ...k, imageUrl: imgPath, generating: false } : k)
+                                prev.map((k, i) => i === idx ? { ...k, imageUrl: imgUrl, generating: false } : k)
                               );
                             } else {
                               setKeyVisuals((prev) =>
