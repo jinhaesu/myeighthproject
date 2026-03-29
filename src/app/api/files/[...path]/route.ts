@@ -65,7 +65,6 @@ export async function GET(
         'Content-Length': chunkSize.toString(),
         'Content-Type': contentType,
         'Cache-Control': 'public, max-age=3600',
-        'Access-Control-Allow-Origin': '*',
       },
     });
   }
@@ -78,7 +77,6 @@ export async function GET(
       'Content-Length': stat.size.toString(),
       'Accept-Ranges': 'bytes',
       'Cache-Control': 'public, max-age=3600',
-      'Access-Control-Allow-Origin': '*',
     },
   });
 }
