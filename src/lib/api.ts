@@ -72,21 +72,21 @@ export async function apiDelete<T>(url: string): Promise<ApiResponse<T>> {
  * e.g. C:\...\output\videos\1.mp4 → /api/files/videos/1.mp4
  */
 export function getFileUrl(filePath: string): string {
+  // Extract relative path from output directory
   const match = filePath.match(/output[/\\](.+)$/);
   if (match) {
     const relativePath = match[1].replace(/\\/g, '/');
-    // Always use Railway URL in production (files are stored on Railway, not Vercel)
-    if (process.env.NODE_ENV === 'production') {
-      return `${RAILWAY_URL}/api/files/${relativePath}`;
-    }
-    return `/api/files/${relativePath}`;
+    // Always use Railway URL - files are stored on Railway, not Vercel
+    return `${RAILWAY_URL}/api/files/${relativePath}`;
   }
-  // If the path already looks like a relative URL, use Railway in production
+  // If already a relative API path, prefix with Railway
   if (filePath.startsWith('/api/files/')) {
-    if (process.env.NODE_ENV === 'production') {
-      return `${RAILWAY_URL}${filePath}`;
-    }
+    return `${RAILWAY_URL}${filePath}`;
+  }
+  // If it's already a full URL, return as-is
+  if (filePath.startsWith('http')) {
     return filePath;
   }
-  return filePath;
+  // Fallback: assume it's a relative path under output
+  return `${RAILWAY_URL}/api/files/${filePath.replace(/\\/g, '/')}`;
 }
