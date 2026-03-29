@@ -259,9 +259,10 @@ export default function CreatePage() {
   const [sectionsDirty, setSectionsDirty] = useState(false);
   const [sectionsSaving, setSectionsSaving] = useState(false);
 
-  // ── Step 3 state (Key Visuals) ──
-  const [keyVisuals, setKeyVisuals] = useState<Array<{ sectionIndex: number; imageUrl: string | null; generating: boolean }>>([]);
+  // ── Step 5 state (Key Visuals) ──
+  const [keyVisuals, setKeyVisuals] = useState<Array<{ sectionIndex: number; imageUrl: string | null; generating: boolean; selected: boolean }>>([]);
   const [keyVisualsReady, setKeyVisualsReady] = useState(false);
+  const [referenceStyle, setReferenceStyle] = useState<string>(''); // revised prompt from 1st image, used as style anchor
 
   // ── Step 4 state (Video) ──
   const [videoType, setVideoType] = useState<'slideshow' | 'heygen'>('heygen');
@@ -522,7 +523,7 @@ export default function CreatePage() {
         : storyboards.length > 0 ? storyboards
         : scriptSections.length > 0 ? scriptSections
         : sections;
-      setKeyVisuals(boards.map((_, idx) => ({ sectionIndex: idx, imageUrl: null, generating: false })));
+      setKeyVisuals(boards.map((_, idx) => ({ sectionIndex: idx, imageUrl: null, generating: false, selected: true })));
       setCurrentStep(5);
     } catch (err) {
       setError(err instanceof Error ? err.message : '음성 생성 실패');
@@ -561,14 +562,19 @@ export default function CreatePage() {
           avatar_id: selectedAvatarId,
         });
       } else {
-        // Slideshow (Image-to-Video) - pass pre-generated key visual URLs
-        const secs = scriptSections.length > 0 ? scriptSections : sections;
-        const sectionsWithImages = secs.map((s, idx) => ({
-          body: s.body,
-          visual_prompt: s.visual_prompt,
-          duration_seconds: s.duration_seconds,
-          image_url: keyVisuals[idx]?.imageUrl || undefined,
-        }));
+        // Slideshow (Image-to-Video) - only pass SELECTED key visuals
+        const boards = storyboardsWithScript.length > 0 ? storyboardsWithScript
+          : storyboards.length > 0 ? storyboards
+          : scriptSections.length > 0 ? scriptSections
+          : sections;
+        const sectionsWithImages = boards
+          .map((s, idx) => ({
+            body: ('narration' in s ? s.narration : ('body' in s ? s.body : '')),
+            visual_prompt: ('image_prompt' in s ? s.image_prompt : ('visual_prompt' in s ? s.visual_prompt : '')),
+            duration_seconds: s.duration_seconds,
+            image_url: (keyVisuals[idx]?.selected && keyVisuals[idx]?.imageUrl) || undefined,
+          }))
+          .filter((_, idx) => !keyVisuals[idx] || keyVisuals[idx].selected);
         await apiPost('/api/generate/video', {
           content_id: contentId,
           video_engine: videoEngine,
@@ -1855,6 +1861,7 @@ export default function CreatePage() {
                   const secs = boards || (scriptSections.length > 0 ? scriptSections : sections);
                   setLoading(true);
                   setError(null);
+                  let currentRefStyle = referenceStyle;
                   for (let i = 0; i < secs.length; i++) {
                     if (keyVisuals[i]?.imageUrl) continue;
                     setKeyVisuals((prev) =>
@@ -1862,24 +1869,33 @@ export default function CreatePage() {
                     );
                     try {
                       const sec = secs[i];
-                      // Use storyboard's image_prompt directly if available
-                      const prompt = ('image_prompt' in sec && sec.image_prompt)
+                      const basePrompt = ('image_prompt' in sec && sec.image_prompt)
                         ? sec.image_prompt
                         : visualScenario
                           ? `${visualScenario}. Scene: ${('visual_description' in sec ? sec.visual_description : '') || ('title' in sec ? sec.title : '')}`
                           : `Korean health food brand commercial shot. Premium food photography, clean background, vertical 9:16 format.`;
-                      const res = await apiPost<{ imagePath: string; imageUrl: string }>('/api/generate/image', {
+
+                      // For 2nd+ images: prepend reference style from 1st image to maintain consistency
+                      const prompt = (i > 0 && currentRefStyle)
+                        ? `IMPORTANT: Maintain exact same character design, art style, color palette, lighting, and mood as this reference: [${currentRefStyle}]. Now create this scene: ${basePrompt}`
+                        : basePrompt;
+
+                      const res = await apiPost<{ imagePath: string; imageUrl: string; revisedPrompt?: string }>('/api/generate/image', {
                         content_id: contentId,
                         prompt,
                         size: '1024x1792',
                         section_index: i,
                       });
-                      // imageUrl is now a relative URL like /api/files/images/1_section0.png
                       const imgUrl = res.data?.imageUrl;
                       if (imgUrl) {
                         setKeyVisuals((prev) =>
-                          prev.map((kv, idx) => idx === i ? { ...kv, imageUrl: imgUrl, generating: false } : kv)
+                          prev.map((kv, idx) => idx === i ? { ...kv, imageUrl: imgUrl, generating: false, selected: true } : kv)
                         );
+                        // Save 1st image's revised prompt as reference style
+                        if (i === 0 && res.data?.revisedPrompt) {
+                          currentRefStyle = res.data.revisedPrompt;
+                          setReferenceStyle(res.data.revisedPrompt);
+                        }
                       } else {
                         setKeyVisuals((prev) =>
                           prev.map((kv, idx) => idx === i ? { ...kv, generating: false } : kv)
@@ -1912,6 +1928,29 @@ export default function CreatePage() {
               </Button>
             </div>
 
+            {/* Select all / deselect */}
+            {keyVisuals.some((kv) => kv.imageUrl) && (
+              <div className="flex items-center gap-3 text-xs">
+                <span className="text-[#6b7280]">
+                  {keyVisuals.filter((kv) => kv.imageUrl && kv.selected).length}/{keyVisuals.filter((kv) => kv.imageUrl).length} 선택됨
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setKeyVisuals((prev) => prev.map((kv) => ({ ...kv, selected: true })))}
+                  className="text-[#1a5c2e] hover:underline font-medium"
+                >
+                  전체 선택
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setKeyVisuals((prev) => prev.map((kv) => ({ ...kv, selected: false })))}
+                  className="text-[#6b7280] hover:underline"
+                >
+                  전체 해제
+                </button>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {keyVisuals.map((kv, idx) => {
                 const boards = storyboardsWithScript.length > 0 ? storyboardsWithScript
@@ -1921,13 +1960,32 @@ export default function CreatePage() {
                 const sec = boards[idx];
                 if (!sec) return null;
                 return (
-                  <div key={idx} className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-                    {/* Section header */}
-                    <div className="bg-gray-50 px-4 py-2 border-b border-gray-100 flex items-center justify-between">
-                      <span className="text-xs font-semibold text-[#374151]">
+                  <div
+                    key={idx}
+                    className={cn(
+                      'border rounded-xl overflow-hidden bg-white transition-all',
+                      kv.selected ? 'border-[#1a5c2e] ring-1 ring-[#1a5c2e]/20' : 'border-gray-200 opacity-50'
+                    )}
+                  >
+                    {/* Section header with select checkbox */}
+                    <div className="bg-gray-50 px-3 py-2 border-b border-gray-100 flex items-center gap-2">
+                      {kv.imageUrl && (
+                        <input
+                          type="checkbox"
+                          checked={kv.selected}
+                          onChange={() => setKeyVisuals((prev) =>
+                            prev.map((k, i) => i === idx ? { ...k, selected: !k.selected } : k)
+                          )}
+                          className="accent-[#1a5c2e] w-3.5 h-3.5 shrink-0"
+                        />
+                      )}
+                      <span className="text-xs font-semibold text-[#374151] flex-1 truncate">
                         {('index' in sec ? sec.index : ('order' in sec ? sec.order : idx + 1))}. {sec.title}
                       </span>
-                      <span className="text-[10px] text-[#6b7280] bg-gray-100 px-1.5 py-0.5 rounded-full">
+                      {idx === 0 && referenceStyle && (
+                        <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-bold shrink-0">기준</span>
+                      )}
+                      <span className="text-[10px] text-[#6b7280] bg-gray-100 px-1.5 py-0.5 rounded-full shrink-0">
                         {sec.duration_seconds}초
                       </span>
                     </div>
@@ -1972,9 +2030,14 @@ export default function CreatePage() {
                             prev.map((k, i) => i === idx ? { ...k, generating: true } : k)
                           );
                           try {
-                            const prompt = visualScenario
-                              ? `${visualScenario}. Scene: ${sec.visual_description || sec.title}`
-                              : `Korean health food brand commercial shot. ${sec.visual_description || sec.title}. Premium food photography.`;
+                            const basePrompt = ('image_prompt' in sec && sec.image_prompt)
+                              ? sec.image_prompt
+                              : visualScenario
+                                ? `${visualScenario}. Scene: ${sec.visual_description || sec.title}`
+                                : `Korean health food brand commercial shot. ${sec.visual_description || sec.title}. Premium food photography.`;
+                            const prompt = (idx > 0 && referenceStyle)
+                              ? `IMPORTANT: Maintain exact same character design, art style, color palette, lighting, and mood as this reference: [${referenceStyle}]. Now create this scene: ${basePrompt}`
+                              : basePrompt;
                             const res = await apiPost<{ imagePath: string; imageUrl: string }>('/api/generate/image', {
                               content_id: contentId,
                               prompt,
@@ -2034,7 +2097,7 @@ export default function CreatePage() {
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  이미지 확인 완료, 영상 생성으로
+                  선택한 {keyVisuals.filter((kv) => kv.imageUrl && kv.selected).length}컷으로 영상 생성
                 </>
               ) : (
                 <>
