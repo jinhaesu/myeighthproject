@@ -101,6 +101,7 @@ export async function POST(request: Request) {
       data: {
         imagePath: result.imagePath,
         imageUrl: browsableUrl,
+        originalUrl: result.originalUrl,  // Original DALL-E CDN URL for external APIs (e.g. Kling)
         revisedPrompt: result.revisedPrompt,
         generationTimeMs: durationMs,
       },

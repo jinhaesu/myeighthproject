@@ -14,6 +14,7 @@ export interface ImageGenerationParams {
 export interface ImageGenerationResult {
   imagePath: string;
   revisedPrompt: string;
+  originalUrl: string;  // Original DALL-E CDN URL (publicly accessible, temporary)
 }
 
 // ─── Client ─────────────────────────────────────────────────────────────────
@@ -83,5 +84,6 @@ export async function generateImage(params: ImageGenerationParams): Promise<Imag
   return {
     imagePath: outputPath,
     revisedPrompt,
+    originalUrl: imageUrl,
   };
 }

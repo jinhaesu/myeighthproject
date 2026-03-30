@@ -260,7 +260,7 @@ export default function CreatePage() {
   const [sectionsSaving, setSectionsSaving] = useState(false);
 
   // ── Step 5 state (Key Visuals) ──
-  const [keyVisuals, setKeyVisuals] = useState<Array<{ sectionIndex: number; imageUrl: string | null; generating: boolean; selected: boolean }>>([]);
+  const [keyVisuals, setKeyVisuals] = useState<Array<{ sectionIndex: number; imageUrl: string | null; originalUrl: string | null; generating: boolean; selected: boolean }>>([]);
   const [keyVisualsReady, setKeyVisualsReady] = useState(false);
   const [referenceStyle, setReferenceStyle] = useState<string>(''); // revised prompt from 1st image, used as style anchor
 
@@ -523,7 +523,7 @@ export default function CreatePage() {
         : storyboards.length > 0 ? storyboards
         : scriptSections.length > 0 ? scriptSections
         : sections;
-      setKeyVisuals(boards.map((_, idx) => ({ sectionIndex: idx, imageUrl: null, generating: false, selected: true })));
+      setKeyVisuals(boards.map((_, idx) => ({ sectionIndex: idx, imageUrl: null, originalUrl: null, generating: false, selected: true })));
       setCurrentStep(5);
     } catch (err) {
       setError(err instanceof Error ? err.message : '음성 생성 실패');
@@ -572,7 +572,7 @@ export default function CreatePage() {
             body: ('narration' in s ? s.narration : ('body' in s ? s.body : '')),
             visual_prompt: ('image_prompt' in s ? s.image_prompt : ('visual_prompt' in s ? s.visual_prompt : '')),
             duration_seconds: s.duration_seconds,
-            image_url: (keyVisuals[idx]?.selected && keyVisuals[idx]?.imageUrl) || undefined,
+            image_url: (keyVisuals[idx]?.selected && (keyVisuals[idx]?.originalUrl || keyVisuals[idx]?.imageUrl)) || undefined,
           }))
           .filter((_, idx) => !keyVisuals[idx] || keyVisuals[idx].selected);
         await apiPost('/api/generate/video', {
@@ -1880,16 +1880,17 @@ export default function CreatePage() {
                         ? `IMPORTANT: Maintain exact same character design, art style, color palette, lighting, and mood as this reference: [${currentRefStyle}]. Now create this scene: ${basePrompt}`
                         : basePrompt;
 
-                      const res = await apiPost<{ imagePath: string; imageUrl: string; revisedPrompt?: string }>('/api/generate/image', {
+                      const res = await apiPost<{ imagePath: string; imageUrl: string; originalUrl?: string; revisedPrompt?: string }>('/api/generate/image', {
                         content_id: contentId,
                         prompt,
                         size: '1024x1792',
                         section_index: i,
                       });
                       const imgUrl = res.data?.imageUrl;
+                      const origUrl = res.data?.originalUrl || null;
                       if (imgUrl) {
                         setKeyVisuals((prev) =>
-                          prev.map((kv, idx) => idx === i ? { ...kv, imageUrl: imgUrl, generating: false, selected: true } : kv)
+                          prev.map((kv, idx) => idx === i ? { ...kv, imageUrl: imgUrl, originalUrl: origUrl, generating: false, selected: true } : kv)
                         );
                         // Save 1st image's revised prompt as reference style
                         if (i === 0 && res.data?.revisedPrompt) {
@@ -2088,7 +2089,22 @@ export default function CreatePage() {
               스크립트로 돌아가기
             </Button>
             <Button
-              onClick={() => setKeyVisualsReady(true)}
+              onClick={async () => {
+                // Save the first selected image as content thumbnail
+                if (contentId) {
+                  const firstSelected = keyVisuals.find((kv) => kv.imageUrl && kv.selected);
+                  if (firstSelected?.imageUrl) {
+                    try {
+                      await apiPatch(`/api/contents/${contentId}`, {
+                        thumbnail_path: firstSelected.imageUrl,
+                      });
+                    } catch (err) {
+                      console.warn('Failed to save thumbnail:', err);
+                    }
+                  }
+                }
+                setKeyVisualsReady(true);
+              }}
               disabled={keyVisuals.length === 0}
               size="lg"
             >
