@@ -168,6 +168,7 @@ export interface UpdateContentRequest {
   ad_config?: AdConfig;
   hooks?: string[];
   cta_options?: string[];
+  thumbnail_path?: string;
 }
 
 export interface GenerateScriptRequest {
@@ -194,7 +195,7 @@ export interface GenerateVideoRequest {
   font_size?: number;
   generate_images?: boolean;        // Generate DALL-E images for sections (default true)
   video_engine?: VideoEngine;       // 'kling' | 'runway' | 'sora' (default: kling)
-  sections?: Array<{ body: string; visual_prompt?: string; duration_seconds: number }>;
+  sections?: Array<{ body: string; visual_prompt?: string; duration_seconds: number; image_url?: string }>;
 }
 
 export interface CreatePlatformAccountRequest {

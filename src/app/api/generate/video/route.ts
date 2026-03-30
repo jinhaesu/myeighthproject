@@ -26,7 +26,7 @@ async function processVideoGeneration(
     backgroundColor?: string;
     backgroundImage?: string;
     fontSize?: number;
-    sections?: Array<{ body: string; visual_prompt?: string; duration_seconds: number }>;
+    sections?: Array<{ body: string; visual_prompt?: string; duration_seconds: number; image_url?: string }>;
     generateImages: boolean;
     videoEngine: VideoEngine;
   }
@@ -134,7 +134,7 @@ export async function POST(request: Request) {
     }
 
     // Parse sections from content DB or request body
-    let sections: Array<{ body: string; visual_prompt?: string; duration_seconds: number }> | undefined;
+    let sections: Array<{ body: string; visual_prompt?: string; duration_seconds: number; image_url?: string }> | undefined;
 
     if (body.sections && body.sections.length > 0) {
       sections = body.sections;

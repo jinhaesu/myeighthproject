@@ -125,6 +125,10 @@ export async function PATCH(
       setClauses.push('metadata = ?');
       values.push(JSON.stringify(body.metadata));
     }
+    if (body.thumbnail_path !== undefined) {
+      setClauses.push('thumbnail_path = ?');
+      values.push(body.thumbnail_path);
+    }
 
     if (setClauses.length === 0) {
       return Response.json(
