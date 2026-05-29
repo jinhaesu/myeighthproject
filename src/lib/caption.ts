@@ -79,7 +79,7 @@ Respond ONLY in this JSON format:
 }`;
 
   const message = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-opus-4-8',
     max_tokens: 1024,
     system: systemPrompt,
     messages: [

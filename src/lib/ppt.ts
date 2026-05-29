@@ -69,7 +69,7 @@ export async function structurize(text: string, preset: PptPreset, customInstruc
     : `[원문]\n${text}`;
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-opus-4-8',
     max_tokens: 4096,
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userMessage }],
