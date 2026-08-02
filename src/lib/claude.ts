@@ -94,7 +94,7 @@ export async function generateScript(
   });
 
   const message = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-fable-5',
     max_tokens: 8192,
     system: systemPrompt,
     messages: [
@@ -225,7 +225,7 @@ export async function generateStoryboards(
   });
 
   const message = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-fable-5',
     max_tokens: 4096,
     system: STORYBOARD_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
@@ -285,7 +285,7 @@ export async function generateNarration(
   });
 
   const message = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-fable-5',
     max_tokens: 4096,
     system: NARRATION_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
