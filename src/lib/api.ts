@@ -1,8 +1,8 @@
 import type { ApiResponse } from '@/types';
 
-// In production, API calls go directly to Railway (Vercel can't run Python/ffmpeg/SQLite)
+// In production, API calls go directly to Cloud Run (Vercel can't run Python/ffmpeg/SQLite)
 // In development, API calls go to local server
-const RAILWAY_URL = 'https://myeighthproject-production.up.railway.app';
+const RAILWAY_URL = 'https://myeighthproject-557811875995.asia-northeast3.run.app';
 
 function getBaseUrl(): string {
   if (typeof window === 'undefined') {

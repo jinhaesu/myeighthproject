@@ -93,7 +93,7 @@ export async function POST(request: Request) {
       : `images/${filename}`;
     const railwayHost = process.env.RAILWAY_PUBLIC_DOMAIN
       ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-      : (isProduction ? 'https://myeighthproject-production.up.railway.app' : '');
+      : (isProduction ? 'https://myeighthproject-557811875995.asia-northeast3.run.app' : '');
     const browsableUrl = `${railwayHost}/api/files/${relativePath}`;
 
     return Response.json({

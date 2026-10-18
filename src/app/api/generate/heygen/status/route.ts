@@ -80,7 +80,7 @@ export async function GET(request: Request) {
         const isProduction = process.env.NODE_ENV === 'production';
         const railwayHost = process.env.RAILWAY_PUBLIC_DOMAIN
           ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-          : (isProduction ? 'https://myeighthproject-production.up.railway.app' : '');
+          : (isProduction ? 'https://myeighthproject-557811875995.asia-northeast3.run.app' : '');
         browsableVideoPath = `${railwayHost}/api/files/${relMatch[1].replace(/\\/g, '/')}`;
       }
     }
